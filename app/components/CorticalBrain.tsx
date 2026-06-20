@@ -33,15 +33,22 @@ export function CorticalBrain({ familyLevels, intensity }: { familyLevels?: numb
       const canvas = canvasRef.current;
       if (!canvas) return;
       let surface: Surface | null = null;
-      try {
-        // Bypass the HTTP cache: the surface payload (mesh resolution, family
-        // masks) can change between runs, and a stale cache would drop the
-        // activation regions.
-        const response = await fetch("/api/surface", { cache: "no-store" });
-        if (!response.ok) throw new Error("surface unavailable");
-        surface = await response.json();
-      } catch {
-        if (!disposed) setState("fallback");
+      while (!disposed && !surface) {
+        try {
+          // Bypass the HTTP cache: the surface payload (mesh resolution, family
+          // masks) can change between runs, and a stale cache would drop the
+          // activation regions.
+          const response = await fetch("/api/surface", { cache: "no-store" });
+          if (!response.ok) throw new Error("surface unavailable");
+          surface = await response.json();
+        } catch {
+          if (disposed) return;
+          // The worker can still be downloading the surface or starting after
+          // the frontend. Keep the preview label visible, then recover into
+          // the real WebGL surface without requiring a page refresh.
+          setState("fallback");
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 3_000));
+        }
       }
       if (disposed) return;
       if (!surface) return;
@@ -194,7 +201,7 @@ export function CorticalBrain({ familyLevels, intensity }: { familyLevels?: numb
 
   return <div className="cortical-wrap">
     <canvas ref={canvasRef} className="cortical-canvas" aria-label="Interactive fsaverage cortical surface; drag to rotate" />
-    <div className={`surface-status ${state}`}>{state === "loading" ? "LOADING FSAVERAGE SURFACE" : state === "fallback" ? "LOCAL SURFACE OFFLINE · VISUAL PREVIEW" : `${meshName.toUpperCase()} PIAL · WEBGL SURFACE`}</div>
+    <div className={`surface-status ${state}`}>{state === "loading" ? "LOADING FSAVERAGE SURFACE" : state === "fallback" ? "SURFACE OFFLINE · PREVIEW MODE" : `${meshName.toUpperCase()} PIAL · WEBGL SURFACE`}</div>
     <div className="surface-instruction">DRAG TO ROTATE</div>
     <div className="activity-legend">
       <div className="legend-scale"><span>Low</span><span>High</span></div>

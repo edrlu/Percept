@@ -79,7 +79,7 @@ cleanup() {
 }
 trap cleanup EXIT INT TERM
 
-if [[ ! -d node_modules ]]; then
+if ! node -e "require.resolve('next/package.json')" >/dev/null 2>&1; then
   info "Installing Next.js dependencies…"
   npm install
 fi
@@ -130,7 +130,15 @@ echo "  • Worker status/logs: tail -f ${WORKER_LOG#$ROOT_DIR/}"
 echo "  • Press Ctrl-C to stop both services."
 echo ""
 
+# Turbopack persists development state in the output directory. A partially
+# installed or upgraded Next.js can leave that state referring to a package it
+# can no longer resolve (reported as "Next.js package not found"). Each
+# launcher session owns this port-specific directory, so reset it before
+# starting to guarantee a fresh module-resolution graph.
+NEXT_DIST_DIR=".next-dev-${NEXT_PORT}"
+rm -rf "$NEXT_DIST_DIR"
+
 TRIBEV2_API_URL="http://${WORKER_HOST}:${WORKER_PORT}" \
-NEXT_DIST_DIR=".next-dev-${NEXT_PORT}" \
+NEXT_DIST_DIR="$NEXT_DIST_DIR" \
 NEXT_TELEMETRY_DISABLED=1 \
 npm run dev -- --port "$NEXT_PORT"
