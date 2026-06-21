@@ -741,28 +741,35 @@ export default function Home() {
   // so scores stream into the picker take-by-take instead of waiting for all
   // three. best/average are recomputed client-side as each score lands. The
   // worker reuses the original's saved per-vertex baseline (recomputed on the GPU
-  // even for a cached original), so a cached original always scores. If the
-  // original has no live baseline at all (demo fallback, no referenceId), the
-  // take is shown without a score rather than blocking.
+  // even for a cached original), so a cached original always scores against it.
+  // With no baseline at all the worker scores the take within-video — so the
+  // model ALWAYS runs on each take and a score always comes back. Only requires
+  // the runId; referenceId is optional.
   async function scoreTake(key: string, i: number) {
     const runId = regenJobs[key]?.runId;
+    if (!runId) return;
     const referenceId = analysis.referenceId;
-    if (!runId || !referenceId) return;
+    const slot = key.split("-").map((s) => formatTime(Number(s))).join("–");
+    const scoreLog = `score_${key}_t${i}`;
+    // A visible activity-feed task per take: each generated take is run through
+    // TRIBE v2 to compute its engagement the moment it finishes.
+    logUpsert(scoreLog, { title: `Score take ${i + 1} · ${slot}`, detail: "Running the take through TRIBE v2…", status: "active", bar: true });
     setRegenJobs((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], scoring: true } } : prev));
     try {
       const res = await fetch("/api/regenerate/score", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ runId, referenceId, takeIndex: i }),
+        body: JSON.stringify({ runId, referenceId: referenceId || "", takeIndex: i }),
       });
       if (!res.ok) {
         const detail = await res.json().then((d) => d?.error).catch(() => null);
-        logUpsert(`regen_${key}_score`, { title: "Take scoring", detail: detail || "Scoring failed — showing the take without a score.", status: "note" });
+        logUpsert(scoreLog, { title: `Score take ${i + 1} · ${slot}`, detail: detail || "Scoring failed — showing the take without a score.", status: "error" });
         throw new Error(detail || "scoring request failed");
       }
       const data: { takes: { takeIndex: number; score: number; factors: Factors; series: TakeSeries }[] } = await res.json();
       const t = data.takes?.find((x) => x.takeIndex === i) ?? data.takes?.[0];
       if (!t) throw new Error("no score returned");
+      logUpsert(scoreLog, { title: `Score take ${i + 1} · ${slot}`, detail: `Engagement ${Math.round(t.score)}/100${referenceId ? " vs original (50 = baseline)" : " (within-clip)"}`, status: "done" });
       setRegenJobs((prev) => {
         const cur = prev[key];
         if (!cur) return prev;

@@ -533,6 +533,16 @@ async def predict(video: UploadFile = File(...)):
             try:
                 cached = json.loads(cache_file.read_text())
                 cached["cached"] = True
+                # Legacy cache entries (created before take-scoring) lack the
+                # referenceId the scorer keys on — without it the take picker
+                # silently skips scoring. Backfill it (= the content digest) and
+                # persist so the original is always scorable.
+                if not cached.get("referenceId"):
+                    cached["referenceId"] = digest
+                    try:
+                        cache_file.write_text(json.dumps({**cached, "cached": False}))
+                    except Exception as exc:
+                        print(f"[cache] could not backfill referenceId {digest[:12]}: {exc}")
                 # Scoring (/score_takes) reuses the original's per-vertex baseline
                 # (.ref.npz). A fresh /predict saves it below, but cache entries
                 # from before the scoring feature — or after a cleanup — may lack
@@ -606,8 +616,9 @@ def _load_reference(reference_id: str) -> tuple[np.ndarray, np.ndarray] | None:
     return data["mu"], data["sd"]
 
 
-def _score_against_reference(video_path: Path, ref: tuple[np.ndarray, np.ndarray]) -> dict:
-    """Run TRIBE on one clip and score it against the given reference baseline."""
+def _score_against_reference(video_path: Path, ref: tuple[np.ndarray, np.ndarray] | None) -> dict:
+    """Run TRIBE on one clip. With a reference baseline, score against it (50 =
+    original); without one (ref=None), score within-video (the take's own engagement)."""
     infer_path = _maybe_downscale(video_path)
     events = model.get_events_dataframe(video_path=str(infer_path))
     predictions, _ = model.predict(events, verbose=False)
@@ -615,7 +626,7 @@ def _score_against_reference(video_path: Path, ref: tuple[np.ndarray, np.ndarray
 
 
 @app.post("/score_takes")
-async def score_takes(referenceId: str = Form(...), takes: list[UploadFile] = File(...)):
+async def score_takes(referenceId: str = Form(""), takes: list[UploadFile] = File(...)):
     """Score regenerated takes against an already-scored ORIGINAL video.
 
     The original is NOT re-encoded: we reuse the per-vertex baseline saved by
@@ -625,11 +636,13 @@ async def score_takes(referenceId: str = Form(...), takes: list[UploadFile] = Fi
     and the per-frame series per take, plus the best take index."""
     if model is None:
         raise HTTPException(status_code=503, detail="Model is still loading.")
-    ref = _load_reference(referenceId)
-    if ref is None:
-        raise HTTPException(status_code=409, detail="Unknown referenceId — score the original first.")
     if not takes:
         raise HTTPException(status_code=400, detail="No takes supplied.")
+    # The original's saved baseline makes takes comparable to it (50 = original).
+    # If it's missing — or no referenceId was supplied — fall back to scoring each
+    # take WITHIN-VIDEO (its own engagement), so the model still runs on every take
+    # and a score always comes back instead of 409-ing.
+    ref = _load_reference(referenceId) if referenceId else None
 
     out: list[dict] = []
     with tempfile.TemporaryDirectory(prefix="score-takes-") as tmp:

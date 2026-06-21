@@ -29,9 +29,11 @@ export async function POST(request: Request) {
   try { body = await request.json(); }
   catch { return NextResponse.json({ error: "Expected JSON { runId, referenceId, takeIndex? }" }, { status: 400 }); }
   const { runId, referenceId, takeIndex } = body;
-  if (!runId || !referenceId) {
-    return NextResponse.json({ error: "Missing runId or referenceId" }, { status: 400 });
+  if (!runId) {
+    return NextResponse.json({ error: "Missing runId" }, { status: 400 });
   }
+  // referenceId is optional: without it (or without a saved baseline) the worker
+  // scores each take within-video, so the model still runs and a score returns.
   // takeIndex (0-based) scores a SINGLE take, so the UI can score each take the
   // instant it finishes. Omit it to score the whole batch (cached for reopen).
   const single = typeof takeIndex === "number" && takeIndex >= 0;
@@ -44,7 +46,7 @@ export async function POST(request: Request) {
   }
 
   const form = new FormData();
-  form.append("referenceId", referenceId);
+  form.append("referenceId", referenceId || "");
   let count = 0;
   const takeNums = single ? [takeIndex! + 1] : Array.from({ length: VARIANT_COUNT }, (_unused, i) => i + 1);
   for (const n of takeNums) {
