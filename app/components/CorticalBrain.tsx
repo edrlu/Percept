@@ -230,7 +230,7 @@ export function CorticalBrain({ familyLevels, intensity, dominantColor }: { fami
       composer.addPass(new RenderPass(scene, camera));
       // (resolution, strength, radius, threshold) — threshold sits above the lit
       // matte tissue so only the emissive activation + rim actually bleed light.
-      const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.95, 0.5, 0.62);
+      const bloom = new UnrealBloomPass(new THREE.Vector2(1, 1), 0.85, 0.5, 0.62);
       composer.addPass(bloom);
       composer.addPass(new OutputPass());
 
