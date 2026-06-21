@@ -41,9 +41,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
+# Clip-regeneration job scratch (source video, extracted frames, generated + merged clips)
+/regen/
+
 # Local TRIBE v2 runtime
 /.venv/
 /.tribev2-worker*.log
+/.regen-worker*.log
 /worker/.cache/
 
 # Local AI-assistant tooling and Python bytecode

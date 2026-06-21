@@ -31,6 +31,8 @@ WORKER_PORT="${TRIBEV2_PORT:-8000}"
 NEXT_PORT="${PORT:-3000}"
 WORKER_LOG=""
 WORKER_PID=""
+REGEN_WORKER_PID=""
+REGEN_WORKER_LOG=""
 
 fail() { echo "\nerror: $*" >&2; exit 1; }
 info() { echo "→ $*"; }
@@ -71,6 +73,11 @@ fi
 WORKER_LOG="$ROOT_DIR/.tribev2-worker-${WORKER_PORT}.log"
 
 cleanup() {
+  if [[ -n "${REGEN_WORKER_PID:-}" ]] && kill -0 "$REGEN_WORKER_PID" 2>/dev/null; then
+    info "Stopping clip-regeneration worker…"
+    kill "$REGEN_WORKER_PID" 2>/dev/null || true
+    wait "$REGEN_WORKER_PID" 2>/dev/null || true
+  fi
   if [[ -n "${WORKER_PID:-}" ]] && kill -0 "$WORKER_PID" 2>/dev/null; then
     info "Stopping TRIBE v2 worker…"
     kill "$WORKER_PID" 2>/dev/null || true
@@ -137,6 +144,22 @@ echo ""
 # starting to guarantee a fresh module-resolution graph.
 NEXT_DIST_DIR=".next-dev-${NEXT_PORT}"
 rm -rf "$NEXT_DIST_DIR"
+
+# Clip-regeneration worker: watches regen/<id>/job.json for queued cuts and
+# drives the Pika/Seedance generation through a headless `claude` (agent-in-the-
+# loop, see REGENERATE.md). Without it, a regenerate request sits in
+# "awaiting_generation" forever. It polls harmlessly until the app is up, so it
+# can start before Next finishes booting.
+if command -v claude >/dev/null 2>&1; then
+  REGEN_WORKER_LOG="$ROOT_DIR/.regen-worker-${NEXT_PORT}.log"
+  info "Starting clip-regeneration worker (logs: ${REGEN_WORKER_LOG#$ROOT_DIR/})"
+  CEREBRA_URL="http://localhost:${NEXT_PORT}" \
+  node "$ROOT_DIR/worker/regen-worker.mjs" >"$REGEN_WORKER_LOG" 2>&1 &
+  REGEN_WORKER_PID=$!
+else
+  echo "Note: 'claude' CLI not found — clip regeneration will stay queued."
+  echo "  Install Claude Code so the worker can run the Pika/Seedance step."
+fi
 
 TRIBEV2_API_URL="http://${WORKER_HOST}:${WORKER_PORT}" \
 NEXT_DIST_DIR="$NEXT_DIST_DIR" \

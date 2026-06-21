@@ -10,11 +10,15 @@ from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
 
+import json
+
 import numpy as np
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from tribev2 import TribeModel
+from utils import splice_video, video_duration
 
 MODEL_ID = os.getenv("TRIBEV2_MODEL_ID", "facebook/tribev2")
 # Docker supplies /data/cache. For a native local run, keep the downloaded
@@ -28,7 +32,7 @@ model: TribeModel | None = None
 # summaries only. They are not direct measurements of reward, emotion,
 # self-relevance, memory encoding, or subcortical structures.
 #
-# Each entry: key, display label, side-panel colour, and a centre
+# Each entry: key, displaoy label, side-panel colour, and a centre
 # (|x| laterality, y anterior, z superior, radius) in FreeSurfer surface mm,
 # projected onto the visible cortical mesh for the WebGL viewer.
 ENGAGEMENT_FAMILIES = [
@@ -227,6 +231,61 @@ def health():
 @app.get("/surface")
 def surface_mesh():
     return get_surface_mesh()
+
+
+@app.post("/splice")
+async def splice(
+    video: UploadFile = File(...),
+    ranges: str = Form(...),
+    as_fraction: bool = Form(True),
+):
+    """Remove the given time ranges from an uploaded video and return the
+    spliced mp4. `ranges` is a JSON array of [start, end] pairs — interpreted as
+    fractions of the clip duration when `as_fraction` is true (the default), so
+    the browser can mark cuts without knowing the exact container duration."""
+    if not video.content_type or not video.content_type.startswith("video/"):
+        raise HTTPException(status_code=415, detail="Upload a video file.")
+    suffix = Path(video.filename or "clip.mp4").suffix.lower()
+    if suffix not in {".mp4", ".mov", ".webm", ".avi", ".mkv"}:
+        raise HTTPException(status_code=415, detail="Use MP4, MOV, WebM, AVI, or MKV.")
+    try:
+        pairs = [(float(a), float(b)) for a, b in json.loads(ranges)]
+    except (ValueError, TypeError, json.JSONDecodeError):
+        raise HTTPException(status_code=400, detail="`ranges` must be JSON like [[start,end],...].")
+    if not pairs:
+        raise HTTPException(status_code=400, detail="No cut ranges supplied.")
+
+    work = Path(tempfile.mkdtemp(prefix="splice-job-"))
+    source = work / f"input{suffix}"
+    written = 0
+    with source.open("wb") as output:
+        while chunk := await video.read(1024 * 1024):
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                raise HTTPException(status_code=413, detail="Video exceeds upload limit.")
+            output.write(chunk)
+    await video.close()
+
+    try:
+        if as_fraction:
+            duration = video_duration(source)
+            pairs = [(a * duration, b * duration) for a, b in pairs]
+        out_path = splice_video(source, pairs, out_path=work / "spliced.mp4")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Splice failed: {exc}") from exc
+
+    from starlette.background import BackgroundTask
+    import shutil
+
+    name = f"{Path(video.filename or 'clip').stem}_spliced.mp4"
+    return FileResponse(
+        out_path,
+        media_type="video/mp4",
+        filename=name,
+        background=BackgroundTask(lambda: shutil.rmtree(work, ignore_errors=True)),
+    )
 
 
 @app.post("/predict")
