@@ -927,7 +927,7 @@ export default function Home() {
           <p className="variant-sub">{VARIANT_COUNT} independent AI takes of this slot{stillGenerating ? " — still generating, takes appear as they finish." : ". Pick the one to splice in."}</p>
           <div className="variant-grid">
             {variants.map((v, i) => <div className={`variant-card ${v.status}`} key={i}>
-              <div className="variant-head"><span>Take {i + 1}</span><span className="variant-labels">{v.status === "done" && typeof v.score === "number" && <b className="variant-score" aria-label={`Filler model grade ${v.score} out of 100`}>{v.score}</b>}{v.status === "done" ? <em className="ok">ready</em> : v.status === "error" ? <em className="bad">failed</em> : <em>{REGEN_LABEL[v.status]}</em>}</span></div>
+              <div className="variant-head"><span>Take {i + 1}</span><span className="variant-labels">{v.status === "done" && typeof v.score === "number" && <b className="variant-score" title="Filler model grade" aria-label={`Filler model grade ${v.score} out of 100`}>{v.score}</b>}{v.status === "done" ? <em className="ok">ready</em> : v.status === "error" ? <em className="bad">failed</em> : <em>{REGEN_LABEL[v.status]}</em>}</span></div>
               {v.status === "done" && v.clipUrl
                 ? <video className="variant-video" src={v.clipUrl} muted loop playsInline autoPlay controls/>
                 : <div className="variant-pending">{v.status === "error" ? <span className="variant-error" title={v.error}>{v.error || "Generation failed"}</span> : <><i className="regen-dot"/>{REGEN_LABEL[v.status]}</>}</div>}
