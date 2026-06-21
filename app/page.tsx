@@ -1072,12 +1072,27 @@ export default function Home() {
       const variants = st.variants;
       const stillGenerating = variants.some((v) => isInFlight(v.status));
       const FACTORS: (keyof Factors)[] = ["AUD", "LANG", "ATTN", "VIS"];
+      // The takes regenerate only this slot, so the reference is the ORIGINAL's
+      // engagement over the SAME [start,end] window — not the whole-clip average —
+      // computed as the mean of its four factors across just those frames.
+      const slotMean = (vals: number[]) => {
+        const len = analysis.global.length;
+        if (len < 1 || analysis.duration <= 0) return 0;
+        const i0 = Math.max(0, Math.round((start / analysis.duration) * (len - 1)));
+        const i1 = Math.min(len - 1, Math.round((end / analysis.duration) * (len - 1)));
+        let s = 0, n = 0;
+        for (let k = i0; k <= i1; k += 1) { s += vals[k] ?? 0; n += 1; }
+        return n ? s / n : 0;
+      };
+      const originalSlotScore = analysis.global.length > 1
+        ? Math.round(FAMILY_KEYS.reduce((sum, fk) => sum + slotMean(analysis.cognitiveSeries?.[fk] ?? []), 0) / FAMILY_KEYS.length)
+        : score;
       return <div className="info-backdrop" onClick={() => setVariantPicker(null)}>
         <div className="variant-modal" onClick={(e) => e.stopPropagation()}>
           <div className="info-head">
             <h2>Choose a take · {slot}</h2>
             <div className="variant-head-right">
-              {analysis.referenceId && <span className="variant-avg" title="The original clip's overall engagement — the mean of its four factors. A take scoring higher beats it.">Original {score}</span>}
+              {analysis.referenceId && <span className="variant-avg" title="The original clip's engagement over THIS slot — the mean of its four factors across just this window. A take scoring higher beat the original here.">Original {originalSlotScore}</span>}
               <button className="icon-button" onClick={() => setVariantPicker(null)} aria-label="Close"><Icon name="close" size={18}/></button>
             </div>
           </div>
