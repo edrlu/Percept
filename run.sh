@@ -178,6 +178,7 @@ if [[ -n "$REGEN_AGENTS" ]]; then
   REGEN_WORKER_LOG="$ROOT_DIR/.regen-worker-${NEXT_PORT}.log"
   info "Starting clip-regeneration worker (agents: ${REGEN_AGENTS} · logs: ${REGEN_WORKER_LOG#$ROOT_DIR/})"
   CEREBRA_URL="http://localhost:${NEXT_PORT}" \
+  CEREBRA_REGEN_CONCURRENCY="${CEREBRA_REGEN_CONCURRENCY:-3}" \
   node "$ROOT_DIR/worker/regen-worker.mjs" >"$REGEN_WORKER_LOG" 2>&1 &
   REGEN_WORKER_PID=$!
 else

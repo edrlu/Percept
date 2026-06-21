@@ -26,7 +26,10 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REGEN_DIR = process.env.CEREBRA_REGEN_DIR || path.join(ROOT, "regen");
 const APP_URL = (process.env.CEREBRA_URL || `http://localhost:${process.env.PORT || 3000}`).replace(/\/$/, "");
 const POLL_MS = Number(process.env.CEREBRA_REGEN_POLL_MS) || 4000;
-const MAX_CONCURRENT = Number(process.env.CEREBRA_REGEN_CONCURRENCY) || 1;
+// Up to three clips regenerate at once: the UI queues a batch of cuts together
+// and each spawns its own agent → Pika call, so they run as three concurrent
+// generations rather than serially. Override with CEREBRA_REGEN_CONCURRENCY.
+const MAX_CONCURRENT = Number(process.env.CEREBRA_REGEN_CONCURRENCY) || 3;
 // A claimed job whose agent never reported back is reclaimed after this long so
 // a crashed agent doesn't strand the job permanently.
 const STALE_CLAIM_MS = Number(process.env.CEREBRA_REGEN_STALE_MS) || 12 * 60_000;
