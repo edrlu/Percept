@@ -30,9 +30,16 @@ neuralset.extractors.video so the optimized path matches the stock path to fp
 tolerance. Validate by A/B-ing the engagement score with TRIBEV2_BATCH=1 vs >1
 (and PREFETCH on/off) on the same clip -- they should agree.
 
-Note: the optimized path bypasses neuralset's exca infra caching decorator on
-`_get_data`. That cache is redundant with the worker's own per-video JSON cache
-(content-addressed), so losing it only matters within a single uncached run.
+IMPORTANT -- caching is load-bearing: model.predict builds a DataLoader whose
+(forked) worker processes RE-INVOKE the video extractor. Stock relies on exca's
+per-event cache so that re-invocation is a cache HIT (the encode runs once,
+during get_events_dataframe). If we replaced the decorated _get_data outright we
+would bypass that cache, and each forked worker would re-load the V-JEPA2 model
+and call .to("cuda") inside a forked subprocess -- which CUDA forbids (it
+crashes). So we DO NOT replace the class method. Instead we swap the inner
+function that exca's cache wraps (the MapInfraMethod.method), leaving the cache
+fully in charge: the heavy encode still runs exactly once and is cached, and the
+DataLoader workers hit the cache without ever touching a model.
 """
 
 import logging
@@ -53,9 +60,11 @@ from neuralset.extractors.video import (
 
 logger = logging.getLogger(__name__)
 
-# Saved reference to the stock (exca-decorated) method so we can delegate to it
+# Saved reference to the stock INNER computation -- the raw function that exca's
+# cache wraps (MapInfraMethod.method), NOT the decorated class method. We swap
+# this so the cache stays in charge (see module docstring). Also used to delegate
 # for anything we don't optimize (non-vjepa2 models).
-_ORIGINAL_GET_DATA = None
+_ORIGINAL_METHOD = None
 
 
 def _opts():
@@ -113,8 +122,10 @@ def _patched_get_data(self, events):
     batch_size, prefetch = _opts()
 
     # Only optimize native vjepa2 video extraction; everything else -> stock.
+    # (Delegating to _ORIGINAL_METHOD still runs under exca's cache, since THIS
+    # function is the cache's inner method.)
     if "vjepa2" not in self.image.model_name or (batch_size == 1 and not prefetch):
-        yield from _ORIGINAL_GET_DATA(self, events)
+        yield from _ORIGINAL_METHOD(self, events)
         return
 
     logger.info(
@@ -246,20 +257,56 @@ def _patched_get_data(self, events):
         )
 
 
-def install_fastpath():
-    """Install the monkeypatch IFF a speedup is requested. Returns True if active.
+def _find_infra_method():
+    """Locate exca's MapInfraMethod that wraps HuggingFaceVideo._get_data.
 
-    No-op (and leaves neuralset untouched) when TRIBEV2_BATCH<=1 and
-    TRIBEV2_PREFETCH is unset -- so the default path carries zero risk.
+    The cache lives on the `infra` field's default MapInfra; the inner user
+    function is imethod.method. Returns the imethod, or None if the structure
+    isn't what we expect -- in which case we refuse to install rather than risk
+    breaking the predict-stage cache.
     """
-    global _ORIGINAL_GET_DATA
+    try:
+        default = HuggingFaceVideo.model_fields["infra"].default
+    except (KeyError, AttributeError, TypeError):
+        return None
+    imethod = getattr(default, "_infra_method", None)
+    if imethod is None or not callable(getattr(imethod, "method", None)):
+        return None
+    return imethod
+
+
+def install_fastpath():
+    """Install the speedup IFF requested. Returns True if active.
+
+    No-op (leaves neuralset untouched) when TRIBEV2_BATCH<=1 and TRIBEV2_PREFETCH
+    is unset -- so the default path carries zero risk. We swap the cache's INNER
+    function (imethod.method), NOT the decorated class method, so exca keeps
+    caching and model.predict's DataLoader workers hit the cache instead of
+    recomputing (which would load a model and move it to CUDA inside a forked
+    worker -- a crash). If the exca structure can't be found, we DON'T install.
+    """
+    global _ORIGINAL_METHOD
     batch_size, prefetch = _opts()
     if batch_size == 1 and not prefetch:
         logger.info("[vjepa-fastpath] not requested; stock encode loop in use")
         return False
-    if _ORIGINAL_GET_DATA is None:
-        _ORIGINAL_GET_DATA = HuggingFaceVideo._get_data
-        HuggingFaceVideo._get_data = _patched_get_data
+    imethod = _find_infra_method()
+    if imethod is None:
+        logger.warning(
+            "[vjepa-fastpath] could NOT locate exca infra cache method; not "
+            "installing (refusing to risk the predict-stage cache)"
+        )
+        return False
+    if _ORIGINAL_METHOD is None:
+        _ORIGINAL_METHOD = imethod.method
+        # Masquerade as the stock method so exca's cache-key / __reduce__ logic
+        # (which reads method.__qualname__/__module__) behaves identically.
+        for attr in ("__module__", "__name__", "__qualname__", "__doc__"):
+            try:
+                setattr(_patched_get_data, attr, getattr(_ORIGINAL_METHOD, attr))
+            except (AttributeError, TypeError):
+                pass
+        imethod.method = _patched_get_data
     logger.info(
         "[vjepa-fastpath] installed (batch=%s prefetch=%s)", batch_size, prefetch
     )
