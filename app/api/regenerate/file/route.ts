@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { jobDir } from "@/app/lib/regen";
+import { jobDir, sourceDir } from "@/app/lib/regen";
 
 export const runtime = "nodejs";
 
@@ -15,7 +15,16 @@ const ALLOWED: Record<string, string> = {
 export async function GET(request: Request) {
   const params = new URL(request.url).searchParams;
   const id = params.get("job");
+  const source = params.get("source");
+  const frame = params.get("frame");
+  const edge = params.get("edge");
   const name = params.get("name") ?? "";
+  if (source && frame && (edge === "start" || edge === "end")) {
+    try {
+      const data = await readFile(path.join(sourceDir(source), "frames", `${frame}_${edge}.png`));
+      return new Response(new Uint8Array(data), { headers: { "content-type": "image/png", "cache-control": "no-store" } });
+    } catch { return new Response("Not found", { status: 404 }); }
+  }
   const type = ALLOWED[name];
   if (!id || !type) return new Response("Not found", { status: 404 });
 

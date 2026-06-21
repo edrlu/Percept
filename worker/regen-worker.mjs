@@ -63,6 +63,19 @@ async function claimStale(dir) {
 }
 
 function buildPrompt(job, dir) {
+  const provider = job.provider === "kling" ? "kling" : "seedance";
+  const start = path.join(dir, "frame_start.png");
+  const end = path.join(dir, "frame_end.png");
+  // Each provider takes a different param set for the start->end transition.
+  const step3 = provider === "kling"
+    ? `3. Call mcp__pika__generate_video with: provider="kling", mode="image_to_video", image = the START frame (${start}), ` +
+      `image_tail = the END frame (${end}), your prompt, your negative_prompt, duration=${job.durationSec}, ` +
+      "quality_mode=\"pro\", prompt_adherence=\"strict\", sound=false. (Kling uses image_tail for the end frame and accepts negative_prompt / quality_mode / prompt_adherence.)"
+    : `3. Call mcp__pika__generate_video with: provider="seedance", mode="image_to_video", image = the START frame (${start}), ` +
+      `end_image = the END frame (${end}), your prompt, duration=${job.durationSec}, fast=true, resolution="720p", sound=false, ` +
+      "and aspect_ratio matching the frames' orientation (\"16:9\" for landscape, \"9:16\" for portrait). " +
+      "Do NOT pass negative_prompt, quality_mode, prompt_adherence, or image_tail — Seedance rejects those (image_tail is Kling-only; use end_image). " +
+      "Note: fast tier requires 720p (1080p is rejected with fast).";
   return [
     "You are an automated worker finishing ONE clip-regeneration job for the Cerebra app.",
     "Work autonomously and do NOT ask questions — you have the permissions you need.",
@@ -74,13 +87,13 @@ function buildPrompt(job, dir) {
     `Clip length: ${job.durationSec} seconds`,
     `App base URL: ${APP_URL}`,
     "",
+    `Model: ${provider === "kling" ? "Kling" : "Seedance"} (provider="${provider}")`,
+    "",
     "Follow these steps exactly:",
     "1. Read both frame PNGs so you understand the shot (subjects, text/logos, lighting, what changes start->end).",
-    "2. Read app/lib/regenPrompt.ts and apply its REGEN_META_PROMPT to those two frames to craft a single `prompt` for a Seedance image_to_video morph from the START frame into the END frame. Seedance takes NO negative_prompt — fold any avoidances into the positive prompt.",
-    "3. Call mcp__pika__generate_video with: provider=\"seedance\", mode=\"image_to_video\", image = the START frame, end_image = the END frame, your prompt, " +
-      `duration=${job.durationSec}, resolution=\"1080p\", sound=false, and aspect_ratio matching the frames' orientation (\"16:9\" for landscape, \"9:16\" for portrait). ` +
-      "Do NOT pass negative_prompt, quality_mode, prompt_adherence, or image_tail — Seedance rejects those (image_tail is Kling-only; use end_image). " +
-      "Inspect the tool schema to pass the frames in the form it expects (e.g. a media reference with base64 bytes, or upload_asset first). If it returns {task_id,status}, poll mcp__pika__task_status in a tight loop until status is completed/failed/cancelled.",
+    "2. Read app/lib/regenPrompt.ts and apply its REGEN_META_PROMPT to those two frames to craft a `prompt` (and a `negative_prompt`) for an image_to_video shot from the START frame into the END frame. Favor one continuous, physically plausible action and a smooth eased camera/object trajectory; do not describe a morph unless the endpoints make that mechanism unavoidable.",
+    step3,
+    "Do NOT pass background=true — let the call block and return the video inline (fast/720p renders finish within the server budget). Inspect the tool schema to pass the frames in the form it expects (e.g. a media reference with base64 bytes, or upload_asset first). Only if it falls back to {task_id,status}: poll mcp__pika__task_status in a tight loop until completed/failed/cancelled, passing the task_id EXACTLY as returned — it is a long JWT; copy it verbatim, never truncate or edit it.",
     `4. Download the finished video to ${path.join(dir, "clip.mp4")} (use the tool's download or curl the returned URL via Bash).`,
     "5. Hand the clip back to the app so it merges in place and marks the job done:",
     `   curl -fsS -X POST ${APP_URL}/api/regenerate/complete -F "jobId=${job.id}" -F "clip=@${path.join(dir, "clip.mp4")};type=video/mp4"`,

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { jobDir, mergeReplace, readJob, writeJob } from "@/app/lib/regen";
+import { jobDir, mergeReplace, readJob, sourceDir, writeJob } from "@/app/lib/regen";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -26,7 +26,7 @@ export async function POST(request: Request) {
 
   const dir = jobDir(jobId);
   const clipPath = path.join(dir, "clip.mp4");
-  const source = path.join(dir, "source.mp4");
+  const source = path.join(sourceDir(job.sourceId), "source.mp4");
   const final = path.join(dir, "final.mp4");
   await writeFile(clipPath, Buffer.from(await clip.arrayBuffer()));
 

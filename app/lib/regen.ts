@@ -10,6 +10,7 @@ import path from "node:path";
  */
 
 export const REGEN_ROOT = path.join(process.cwd(), "regen");
+export const SOURCE_ROOT = path.join(REGEN_ROOT, "sources");
 
 export type RegenJob = {
   id: string;
@@ -18,6 +19,9 @@ export type RegenJob = {
   endSec: number;
   durationSec: number; // slot length, snapped to 5 or 10
   totalSec: number; // source duration
+  sourceId: string;
+  frameId: string;
+  provider?: "seedance" | "kling"; // generation model chosen in the UI
   label?: string;
   error?: string;
   createdAt: string;
@@ -27,6 +31,11 @@ export function jobDir(id: string) {
   // Guard against path traversal from a user-supplied id.
   const safe = id.replace(/[^a-zA-Z0-9_-]/g, "");
   return path.join(REGEN_ROOT, safe);
+}
+
+export function sourceDir(id: string) {
+  const safe = id.replace(/[^a-zA-Z0-9_-]/g, "");
+  return path.join(SOURCE_ROOT, safe);
 }
 
 export async function readJob(id: string): Promise<RegenJob | null> {

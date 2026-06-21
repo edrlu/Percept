@@ -21,7 +21,23 @@ if not torch.cuda.is_available():
 
     subprocess.run = _run_whisperx_on_cpu
 
-model = TribeModel.from_pretrained("facebook/tribev2", cache_folder="./cache")
+device = "cuda" if torch.cuda.is_available() else "cpu"
+
+# ``TribeModel.from_pretrained`` applies its ``device`` argument to the brain
+# model, but the pretrained config leaves feature extractors on CUDA.  On a
+# CPU-only machine Neuralset hides that CUDA error behind the generic
+# "Model loading went wrong" exception.  Keep every model in this smoke test
+# on the selected device.
+model = TribeModel.from_pretrained(
+    "facebook/tribev2",
+    cache_folder="./cache",
+    device=device,
+    config_update={
+        "data.text_feature.device": device,
+        "data.audio_feature.device": device,
+        "data.video_feature.image.device": device,
+    },
+)
 
 df = model.get_events_dataframe(video_path="../downloads/cc2.mp4")
 preds, segments = model.predict(events=df)
