@@ -14,6 +14,7 @@ type Analysis = {
   peak: { time: number; label: string; value: number };
   source: "demo" | "model";
   cognitiveSeries?: Record<string, number[]>;
+  referenceId?: string; // sha256 of the scored original; lets takes be scored against it
 };
 
 // Cortical surface proxy regions, in the worker's family order. These are
@@ -34,8 +35,10 @@ type RegenStatus = "extracting" | "awaiting_generation" | "generating" | "mergin
 // Each Regenerate fans out into VARIANT_COUNT independent jobs for the SAME slot
 // — three agent → Pika calls in parallel — so the user gets several takes to
 // choose from. A segment's state is the list of those variant jobs.
-type RegenVariant = { jobId?: string; status: RegenStatus; clipUrl?: string; downloadUrl?: string; logUrl?: string; logTail?: string; error?: string; startedAt?: number; score?: number };
-type RegenJobState = { variants: RegenVariant[] };
+type Factors = { AUD: number; LANG: number; ATTN: number; VIS: number };
+type TakeSeries = { global: number[]; AUD: number[]; LANG: number[]; ATTN: number[]; VIS: number[] };
+type RegenVariant = { jobId?: string; status: RegenStatus; clipUrl?: string; downloadUrl?: string; logUrl?: string; logTail?: string; error?: string; startedAt?: number; score?: number; factors?: Factors; series?: TakeSeries };
+type RegenJobState = { variants: RegenVariant[]; runId?: string; scoring?: boolean; scored?: boolean; best?: number; average?: number };
 type Cut = { start: number; end: number; frameId?: string; preparing?: boolean; frameRequested?: boolean; frameError?: string };
 const VARIANT_COUNT = 3;
 // Leave the final video tail alone. Container duration metadata can include a
@@ -615,7 +618,7 @@ export default function Home() {
     const runId = new Date().toISOString().replace(/[:.]/g, "-");
     // Fresh batch: clear any prior picker auto-open guard and seed N pending variants.
     autoOpenedRef.current.delete(key);
-    setRegenJobs((j) => ({ ...j, [key]: { variants: Array.from({ length: VARIANT_COUNT }, () => ({ status: "extracting" as RegenStatus })) } }));
+    setRegenJobs((j) => ({ ...j, [key]: { variants: Array.from({ length: VARIANT_COUNT }, () => ({ status: "extracting" as RegenStatus })), runId } }));
     // One activity-feed row PER take (regen_<key>_t<i>) so all VARIANT_COUNT
     // show up side by side in ASK CEREBRA, not collapsed into a single line.
     for (let i = 0; i < VARIANT_COUNT; i++) {
