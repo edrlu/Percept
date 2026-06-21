@@ -84,7 +84,7 @@ button,input { font:inherit; } button { cursor:pointer; }
    its own internal layout; there is no global grid for stages to fight over. */
 .app-shell { display:flex; flex-direction:column; height:100dvh; min-height:0; width:100%; background:var(--app-bg); }
 
-.topbar { flex:0 0 auto; height:56px; display:grid; grid-template-columns:auto minmax(160px,1fr) auto; align-items:center; gap:18px; padding:0 22px; border-bottom:1px solid var(--line); }
+.topbar { flex:0 0 auto; height:56px; display:grid; grid-template-columns:auto minmax(160px,1fr) auto; align-items:center; column-gap:46px; row-gap:18px; padding:0 22px; border-bottom:1px solid var(--line); }
 .wordmark { display:flex; align-items:center; gap:9px; font-size:18px; font-weight:500; letter-spacing:-.5px; color:var(--ink); }
 .wordmark-mark { position:relative; flex:none; width:17px; height:17px; border:1.5px solid var(--ink); border-radius:50%; display:grid; place-items:center; }
 .wordmark-mark b { display:block; width:5px; height:5px; border-radius:50%; background:var(--ink); }
@@ -320,9 +320,13 @@ footer span:first-child { max-width:660px; }
 .sample-frame-2 { background:linear-gradient(135deg,var(--stage),var(--live-bg)); }
 .sample-frame-3 { background:linear-gradient(135deg,var(--orange-soft),var(--stage)); }
 
-.deck-segments { flex:0 0 auto; display:flex; flex-direction:column; min-height:0; border-top:1px solid var(--line); background:var(--surface); }
-.deck-seg-head { flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:10px 13px; border-bottom:1px solid var(--line); }
-.deck-seg-empty { margin:0; padding:13px; color:var(--muted); font-size:11px; line-height:1.5; }
+/* Regeneration queue, pinned to the bottom of the insight panel (below the
+   Response systems / Activity body, touching the deck transport beneath it). */
+.panel-segments { flex:0 0 auto; display:flex; flex-direction:column; min-height:0; max-height:46%; border-top:1px solid var(--line-strong); background:color-mix(in srgb,var(--app-bg) 40%,var(--surface)); }
+.panel-seg-head { flex:0 0 auto; display:flex; align-items:center; gap:8px; padding:9px 12px; border-bottom:1px solid var(--line); }
+.panel-seg-head .segments-regen-all { margin-left:auto; }
+.panel-segments .segment-list { flex-direction:column; gap:7px; padding:9px; overflow-x:hidden; overflow-y:auto; }
+.panel-segments .segment-card { flex:0 0 auto; width:auto; }
 .segments-count { display:grid; place-items:center; min-width:18px; height:16px; padding:0 5px; border-radius:8px; background:color-mix(in srgb,var(--danger) 18%,transparent); color:var(--danger-text); font:600 9px/1 var(--font-mono); }
 
 
@@ -590,6 +594,92 @@ footer span:first-child { max-width:660px; }
   .studio-shell .rag-conn { flex-basis:18px; }
 }
 
+/* ── Create workspace: keep the shell navigation intact; make the page itself
+   behave like a focused creative desk instead of an infrastructure console. ── */
+.studio-inner { max-width:1680px; padding:20px 32px 56px; }
+.studio-hero { padding:30px 0 24px; max-width:860px; }
+.studio-eyebrow { margin-bottom:14px; font:600 10px var(--font-sans); letter-spacing:.08em; }
+.studio-hero h1 { font-size:clamp(38px,4vw,58px); line-height:1; letter-spacing:-2.5px; }
+.studio-hero p { max-width:680px; margin-top:14px; font-size:16px; line-height:1.55; }
+
+.studio-shell .rag { margin:0 0 24px; border-color:var(--line); background:color-mix(in srgb,var(--surface) 82%,var(--app-bg)); }
+.studio-shell .rag-head { display:none; }
+.studio-shell .rag-track { padding:10px 16px; align-items:center; }
+.studio-shell .rag-node { align-items:center; gap:9px; padding:4px 8px; border:0; background:transparent; }
+.studio-shell .rag-node.active,.studio-shell .rag-node.done { box-shadow:none; background:transparent; }
+.studio-shell .rag-ic { width:28px; height:28px; border-radius:50%; }
+.studio-shell .rag-body { gap:1px; }
+.studio-shell .rag-row { gap:5px; }
+.studio-shell .rag-n { font-size:8px; }
+.studio-shell .rag-body b { font-size:12px; letter-spacing:0; }
+.studio-shell .rag-body small { font-size:10px; white-space:nowrap; }
+.studio-shell .rag-stat { display:none; }
+.studio-shell .rag-conn { flex-basis:36px; height:1px; }
+.studio-shell .rag-foot { padding:8px 16px; font-family:var(--font-sans); font-size:11px; }
+
+.studio-grid { grid-template-columns:minmax(285px,320px) minmax(430px,1fr) minmax(360px,410px); gap:24px; align-items:stretch; }
+.studio-col { gap:18px; }
+.studio-card { border-radius:14px; box-shadow:0 18px 45px rgba(0,0,0,.08); }
+.studio-shell .panel-head { height:46px; padding:0 16px; font:600 12px var(--font-sans); letter-spacing:-.1px; color:var(--ink); }
+.studio-shell .panel-head span { display:flex; align-items:center; gap:8px; }
+.studio-shell .card-body { padding:18px; gap:18px; }
+
+.studio-shell .fld { gap:8px; }
+.studio-shell .fld label { font:600 12px var(--font-sans); letter-spacing:0; color:var(--ink); }
+.studio-shell .fld textarea,.studio-shell .fld input[type=text],.studio-shell .fld select { border:0; border-bottom:1px solid var(--line-strong); border-radius:0; background:transparent; padding:9px 1px 11px; font-size:14px; }
+.studio-shell .fld textarea { min-height:148px; }
+.studio-shell .fld textarea:focus,.studio-shell .fld input:focus,.studio-shell .fld select:focus { border-color:var(--ink); box-shadow:none; }
+.studio-shell .two { gap:16px; }
+.studio-shell .toggle { margin-top:2px; border-color:var(--line); border-radius:10px; background:transparent; padding:12px 0; border-width:1px 0; }
+.studio-shell .toggle span { font-size:13px; }
+.studio-shell .toggle small { font-size:11px; }
+.studio-shell .btn { min-height:46px; border-radius:10px; font-size:13px; }
+.studio-shell .hint,.studio-shell .loading-note,.studio-shell .mic-status { font-size:12px; }
+
+/* The center column becomes a real destination for the generated direction. */
+.studio-col > .studio-card:first-child { min-height:590px; display:flex; flex-direction:column; overflow:hidden; }
+.studio-shell .payload { flex:1; max-height:none; padding:24px; font:400 14px/1.75 var(--font-sans); color:var(--ink); background:linear-gradient(145deg,var(--stage),color-mix(in srgb,var(--stage) 74%,var(--surface))); }
+.studio-shell .empty-note { flex:1; display:flex; flex-direction:column; align-items:flex-start; justify-content:center; gap:10px; padding:34px; font-size:15px; line-height:1.65; background:radial-gradient(circle at 78% 22%,var(--orange-soft),transparent 30%); }
+.studio-shell .meta { padding:18px; gap:16px; }
+.studio-shell .meta .kv span { font:600 10px var(--font-sans); letter-spacing:.06em; }
+.studio-shell .meta .kv b { font-size:15px; }
+.studio-shell .meta .kv p { font-size:13px; }
+.studio-shell .chip { border-radius:999px; padding:5px 9px; font:500 10px var(--font-sans); }
+
+/* Make the preview feel like the product's destination, not a narrow sidebar. */
+.studio-shell .right { position:sticky; top:14px; display:flex; flex-direction:column; }
+.studio-shell .right > .card-body { order:2; padding:16px 18px 8px; }
+.studio-shell .phone { order:1; width:calc(100% - 36px); max-width:340px; aspect-ratio:3/4; margin:18px auto 12px; border-radius:15px; box-shadow:0 20px 45px rgba(0,0,0,.24); }
+.studio-shell .phone-empty { padding:30px; }
+.studio-shell .phone-empty .orb { width:56px; height:56px; margin-bottom:16px; }
+.studio-shell .phone-empty b { font-size:16px; }
+.studio-shell .phone-empty small { font:400 12px/1.55 var(--font-sans); }
+.studio-shell .phone-cap { order:3; padding:0 18px 18px; font:500 10px var(--font-sans); }
+
+/* A single, aligned creative desk: each of the three primary steps shares one
+   vertical rhythm, while supporting detail can continue beneath the center. */
+@media (min-width:1181px) {
+  .studio-grid > .studio-card,
+  .studio-grid > .studio-col > .studio-card:first-child {
+    height:660px;
+  }
+  .studio-grid > .studio-col > .studio-card:first-child { min-height:660px; }
+}
+
+@media (max-width:1180px) {
+  .studio-grid { grid-template-columns:minmax(270px,320px) minmax(360px,1fr); }
+  .studio-shell .right { grid-column:2; position:static; }
+  .studio-shell .phone { max-width:300px; }
+}
+@media (max-width:760px) {
+  .studio-inner { padding:16px 16px 40px; }
+  .studio-grid { grid-template-columns:1fr; gap:16px; }
+  .studio-shell .right { grid-column:auto; }
+  .studio-shell .rag-track { overflow-x:auto; padding-inline:10px; }
+  .studio-shell .rag-node { min-width:150px; }
+  .studio-hero h1 { letter-spacing:-1.5px; }
+}
+
 /* ── Regen take picker — N AI takes scored vs the original; pick one to splice in.
    Styled to the percept token system (replaces main's --accent/--surface-2 vars). ── */
 .variant-modal { background:var(--surface-raised); border:1px solid var(--line-strong); border-radius:16px; width:min(880px,94vw); max-height:88vh; overflow:auto; padding:22px 24px; box-shadow:0 30px 80px var(--overlay); animation:menu-in .18s var(--ease-out); }
@@ -629,7 +719,6 @@ footer span:first-child { max-width:660px; }
 .lift-point-lines path { stroke:var(--stage-hot); stroke-width:3.5; filter:drop-shadow(0 0 5px var(--stage-hot-glow)); }
 
 /* ── Segments: regenerate-all + batch-ready state ── */
-.deck-seg-actions { display:flex; align-items:center; gap:8px; }
 .segments-regen-all { border:1px solid var(--line-strong); background:var(--control-bg); color:var(--ink); padding:4px 9px; border-radius:7px; font:500 9px var(--font-mono); letter-spacing:.2px; }
 .segments-regen-all:hover { background:var(--control-hover); }
 .segment-regen.ready { border-color:var(--live-line); background:var(--live-bg); color:var(--live-text); }

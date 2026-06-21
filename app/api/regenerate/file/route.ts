@@ -27,6 +27,12 @@ export async function GET(request: Request) {
       return new Response(new Uint8Array(data), { headers: { "content-type": "image/png", "cache-control": "no-store" } });
     } catch { return new Response("Not found", { status: 404 }); }
   }
+  if (source && name === "source.mp4") {
+    try {
+      const data = await readFile(path.join(sourceDir(source), "source.mp4"));
+      return new Response(new Uint8Array(data), { headers: { "content-type": "video/mp4", "cache-control": "no-store" } });
+    } catch { return new Response("Not found", { status: 404 }); }
+  }
   const type = ALLOWED[name];
   if (!id || !type) return new Response("Not found", { status: 404 });
 

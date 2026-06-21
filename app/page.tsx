@@ -435,6 +435,18 @@ export default function Home() {
       logUpsert(`source_${Date.now()}`, { title: "Video source", detail: message, status: "error" });
     });
   }
+
+  // A render from Create becomes the active source in Refine automatically, so
+  // generated clips follow the exact same prediction and editing path as uploads.
+  async function openGeneratedVideo(videoUrl: string) {
+    const response = await fetch(videoUrl, { cache: "no-store" });
+    if (!response.ok) throw new Error("Couldn't load the generated video for refining.");
+    const blob = await response.blob();
+    if (!blob.size) throw new Error("The generated video was empty.");
+    acceptFile(new File([blob], "percept-generated.mp4", { type: blob.type.startsWith("video/") ? blob.type : "video/mp4" }));
+    setStage("refine");
+  }
+
   function onDrop(event: DragEvent<HTMLDivElement>) { event.preventDefault(); setDragging(false); acceptFile(event.dataTransfer.files[0]); }
   function onFileChange(event: ChangeEvent<HTMLInputElement>) { acceptFile(event.target.files?.[0]); }
   function scrubTo(nt: number) {
@@ -941,16 +953,41 @@ export default function Home() {
     </div>
   </div> : null;
 
+  // The regeneration queue lives at the bottom of the right-hand insight panel,
+  // below Response systems / Activity and touching the deck transport below it.
+  const segmentQueue = (inCutMode && segments.length > 0) ? <div className="panel-segments">
+    <div className="panel-seg-head"><span className="eyebrow">Segments to regenerate</span>{regenerableCount > 1 && <button className="segments-regen-all" onClick={regenerateAll} title="Generate takes for every prepared segment at once">Regenerate all ({regenerableCount})</button>}</div>
+    <div className="segment-list">{segments.map((seg, i) => {
+      const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1;
+      const key = `${seg.start}-${seg.end}`;
+      const variants = regenJobs[key]?.variants ?? [];
+      const busy = isSegmentBusy(seg);
+      const ready = isSegmentReady(seg);
+      const doneCount = variants.filter((v) => v.status === "done").length;
+      const errorCount = variants.filter((v) => v.status === "error").length;
+      const firstStart = variants.find((v) => v.startedAt)?.startedAt;
+      const liveLog = variants.find((v) => v.status === "generating" && v.logTail)?.logTail;
+      return <div className={`segment-card ${ready ? "ready" : ""}`} key={key}>
+        <SegmentPreview src={videoUrl!} start={seg.start * factor} end={seg.end * factor}/>
+        <div className="segment-meta"><span className="segment-tag">SEG {i + 1}</span><b>{formatTime(seg.start)} – {formatTime(seg.end)}</b><small>{Math.round(seg.end - seg.start)}s slot · {VARIANT_COUNT} AI takes</small></div>
+        <div className="segment-actions">
+          {ready
+            ? <button className="segment-regen ready" onClick={() => setVariantPicker(key)}>Choose ({doneCount}) <Icon name="reset" size={11}/></button>
+            : busy
+              ? <span className="segment-status"><i className="regen-dot"/>{seg.preparing ? "Preparing frames…" : `${doneCount}/${VARIANT_COUNT} takes${firstStart ? ` · ${formatTime(Math.floor(((regenNow || Date.now()) - firstStart) / 1000))}` : ""}`}</span>
+              : <button className="segment-regen" onClick={() => regenerate(seg)} disabled={!seg.frameId} title={errorCount === VARIANT_COUNT && variants.length ? (variants.find((v) => v.error)?.error || "Generation failed") : seg.frameError || (seg.frameId ? `Generate ${VARIANT_COUNT} AI takes of this slot` : "Frames are being prepared with this splice")}>{errorCount === VARIANT_COUNT && variants.length ? "Retry" : "Regenerate"} <Icon name="reset" size={11}/></button>}
+          <button className="segment-remove" onClick={() => removeCut(cuts.indexOf(seg))} aria-label="Remove segment"><Icon name="close" size={13}/></button>
+        </div>
+        {busy && liveLog ? <small className="segment-logtail" title={liveLog}>{liveLog.trim().split("\n").filter(Boolean).slice(-1)[0]?.slice(0, 140)}</small> : null}
+      </div>; })}</div>
+  </div> : null;
+
   return <main className="app-shell" style={activeScheme.tokens as CSSProperties}>
     <header className="topbar">
       <div className="wordmark"><span className="wordmark-mark" aria-hidden><b/></span><span>percept</span></div>
       <ProgressRail stage={stage} onStage={(s) => { if (s !== "refine") { setSpliceMode(false); setDraftCut(null); } setStage(s); }} />
       <div className="topbar-right">
         <div className="model-pill"><span className="live-dot"/>{status}</div>
-        {stage === "create" && <div className="topbar-score">
-        <div><span className="score-label">Engagement</span><span className="score-foot">Four-system average</span></div>
-        <strong>{score}<small>/100</small></strong>
-        </div>}
         <div className="appearance-control">
           <button className={`icon-button ${showAppearance ? "active" : ""}`} onClick={() => setShowAppearance(!showAppearance)} aria-label="Color scheme settings" aria-expanded={showAppearance} aria-haspopup="dialog"><Icon name="settings" size={17}/></button>
           {showAppearance && <div className="appearance-menu" role="dialog" aria-label="Settings">
@@ -970,7 +1007,7 @@ export default function Home() {
       </div>
     </header>
 
-    {stage === "create" ? <Studio/> : <section className={`refine ${videoUrl ? "has-clip" : "empty"}`}>
+    {stage === "create" ? <Studio onGenerated={openGeneratedVideo}/> : <section className={`refine ${videoUrl ? "has-clip" : "empty"}`}>
       {/* ── The brain hero: a near-full-bleed cinematic stage, the brain the dominant element ── */}
       <div className={`brain-hero ${dragging ? "dropping" : ""}`} onDragOver={(e) => { e.preventDefault(); setDragging(true); }} onDragLeave={() => setDragging(false)} onDrop={onDrop}>
         <CorticalBrain familyLevels={levels} intensity={currentIntensity} dominantColor={dominant.color}/>
@@ -1031,6 +1068,8 @@ export default function Home() {
                   </div>)}
               <div ref={logEndRef}/>
             </div>}
+
+          {segmentQueue}
         </aside>
 
         {/* Empty / loading / offline states — calm, on the stage */}
@@ -1067,33 +1106,6 @@ export default function Home() {
             <button type="button" className="stage-clip-replace" onClick={() => inputRef.current?.click()} aria-label="Replace video"><Icon name="upload" size={12}/></button>
           </div>}
           <div className="deck-graph">{ribbon}</div>
-        </div>}
-
-        {inCutMode && segments.length > 0 && <div className="deck-segments">
-            {regenerableCount > 1 && <div className="deck-seg-head"><span className="deck-seg-actions"><button className="segments-regen-all" onClick={regenerateAll} title="Generate takes for every prepared segment at once">Regenerate all ({regenerableCount})</button><span className="segments-count tnum">{segments.length}</span></span></div>}
-            <div className="segment-list">{segments.map((seg, i) => {
-                  const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1;
-                  const key = `${seg.start}-${seg.end}`;
-                  const variants = regenJobs[key]?.variants ?? [];
-                  const busy = isSegmentBusy(seg);
-                  const ready = isSegmentReady(seg);
-                  const doneCount = variants.filter((v) => v.status === "done").length;
-                  const errorCount = variants.filter((v) => v.status === "error").length;
-                  const firstStart = variants.find((v) => v.startedAt)?.startedAt;
-                  const liveLog = variants.find((v) => v.status === "generating" && v.logTail)?.logTail;
-                  return <div className={`segment-card ${ready ? "ready" : ""}`} key={key}>
-                    <SegmentPreview src={videoUrl!} start={seg.start * factor} end={seg.end * factor}/>
-                    <div className="segment-meta"><span className="segment-tag">SEG {i + 1}</span><b>{formatTime(seg.start)} – {formatTime(seg.end)}</b><small>{Math.round(seg.end - seg.start)}s slot · {VARIANT_COUNT} AI takes</small></div>
-                    <div className="segment-actions">
-                      {ready
-                        ? <button className="segment-regen ready" onClick={() => setVariantPicker(key)}>Choose ({doneCount}) <Icon name="reset" size={11}/></button>
-                        : busy
-                          ? <span className="segment-status"><i className="regen-dot"/>{seg.preparing ? "Preparing frames…" : `${doneCount}/${VARIANT_COUNT} takes${firstStart ? ` · ${formatTime(Math.floor(((regenNow || Date.now()) - firstStart) / 1000))}` : ""}`}</span>
-                          : <button className="segment-regen" onClick={() => regenerate(seg)} disabled={!seg.frameId} title={errorCount === VARIANT_COUNT && variants.length ? (variants.find((v) => v.error)?.error || "Generation failed") : seg.frameError || (seg.frameId ? `Generate ${VARIANT_COUNT} AI takes of this slot` : "Frames are being prepared with this splice")}>{errorCount === VARIANT_COUNT && variants.length ? "Retry" : "Regenerate"} <Icon name="reset" size={11}/></button>}
-                      <button className="segment-remove" onClick={() => removeCut(cuts.indexOf(seg))} aria-label="Remove segment"><Icon name="close" size={13}/></button>
-                    </div>
-                    {busy && liveLog ? <small className="segment-logtail" title={liveLog}>{liveLog.trim().split("\n").filter(Boolean).slice(-1)[0]?.slice(0, 140)}</small> : null}
-                  </div>; })}</div>
         </div>}
 
         {timelineRail}

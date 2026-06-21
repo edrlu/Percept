@@ -62,7 +62,7 @@ type Health = {
 };
 
 const INDUSTRIES = ["", "beverage", "tech", "beauty", "food", "saas", "fitness", "general"];
-const ASPECTS = ["9:16", "3:4", "1:1", "16:9"];
+const ASPECTS = ["3:4", "9:16", "1:1", "16:9"];
 
 // The four RAG stages the pipeline visualizes, in execution order: score the
 // brief against the local corpus → retrieve matches → assemble context →
@@ -109,11 +109,11 @@ function Icon({ name, size = 16 }: { name: "mic" | "spark" | "copy" | "film" | "
   );
 }
 
-export function Studio() {
+export function Studio({ onGenerated }: { onGenerated: (videoUrl: string) => Promise<void> | void }) {
   const [brief, setBrief] = useState("");
   const [product, setProduct] = useState("");
   const [industry, setIndustry] = useState("");
-  const [aspect, setAspect] = useState("9:16");
+  const [aspect, setAspect] = useState("3:4");
   const [liveResearch, setLiveResearch] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -298,7 +298,10 @@ export function Studio() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(apiErrorMessage(data, `Generate failed (${res.status})`));
-      if (data.status === "completed" && data.video_url) setVideoUrl(data.video_url);
+      if (data.status === "completed" && data.video_url) {
+        setVideoUrl(data.video_url);
+        await onGenerated(data.video_url);
+      }
       else setGenStatus(data.message || "Generation unavailable.");
     } catch (e) {
       setGenStatus(e instanceof Error ? e.message : "Generation failed.");
@@ -314,21 +317,11 @@ export function Studio() {
   return (
     <section className="studio-shell" role="tabpanel" aria-label="Studio">
       <div className="studio-inner">
-        <div className="studio-nav">
-          <span className="eyebrow">STAGE 1 / PROMPT OPTIMIZER</span>
-          <div className="model-pill">
-            <span className="live-dot" />
-            {result ? (result.llm_backed ? "LLM BACKED" : "TEMPLATE") : "READY"}
-          </div>
-        </div>
-
         <header className="studio-hero">
-          <span className="studio-eyebrow"><i /> RESEARCH-BACKED · REDIS RAG · REALISTIC SHORT-FORM</span>
-          <h1>Brief to broadcast, <em>engineered.</em></h1>
+          <span className="studio-eyebrow"><i /> CREATE A HIGH-RETENTION VIDEO</span>
+          <h1>From a loose idea to a <em>shoot-ready video.</em></h1>
           <p>
-            Speak or type a brief. percept uses Redis-backed context and proven ad patterns to
-            engineer the exact payload your video model needs — system prompt,
-            evidence, and the Seedance 2.0 generation skill, assembled.
+            Start with the brief. We’ll turn it into a hook, visual direction, and a video prompt that is ready to render.
           </p>
         </header>
 
@@ -337,8 +330,8 @@ export function Studio() {
           <div className="rag-head">
             <div className="rag-title">
               <span className="rag-redis"><Icon name="redis" size={14} /> REDIS</span>
-              <b>REDIS RAG PIPELINE</b>
-              <small>vector search → context assembly → generation</small>
+              <b>PROMPT INTELLIGENCE</b>
+              <small>brief → creative direction → video</small>
             </div>
             <div className={`rag-conn-badge ${redis?.connected ? "ok" : "off"}`}>
               <span className="dot" />
@@ -389,10 +382,10 @@ export function Studio() {
         <div className="studio-grid">
           {/* ── INPUT ─────────────────────────────────────────── */}
           <section className="panel studio-card">
-            <div className="panel-head"><span>BRIEF — VOICE OR TEXT</span></div>
+            <div className="panel-head"><span>01 · YOUR BRIEF</span></div>
             <div className="card-body">
               <div className="fld brief-wrap">
-                <label>WHAT AD DO YOU WANT?</label>
+                <label>What do you want to make?</label>
                 <textarea rows={6} value={brief} placeholder="e.g. a 4-second refreshing Pepsi ad — energetic, realistic, instant payoff…"
                   onChange={(e) => setBrief(e.target.value)} />
                 <button className={`mic${recording ? " live" : ""}${transcribing ? " busy" : ""}`}
@@ -412,11 +405,11 @@ export function Studio() {
 
               <div className="two">
                 <div className="fld">
-                  <label>PRODUCT / BRAND</label>
+                  <label>Product or brand</label>
                   <input type="text" value={product} placeholder="optional" onChange={(e) => setProduct(e.target.value)} />
                 </div>
                 <div className="fld">
-                  <label>INDUSTRY</label>
+                  <label>Industry</label>
                   <select value={industry} onChange={(e) => setIndustry(e.target.value)}>
                     {INDUSTRIES.map((v) => <option key={v} value={v}>{v === "" ? "auto" : v}</option>)}
                   </select>
@@ -424,28 +417,28 @@ export function Studio() {
               </div>
 
               <div className="fld">
-                <label>ASPECT RATIO</label>
+                <label>Format</label>
                 <select value={aspect} onChange={(e) => setAspect(e.target.value)}>
-                  {ASPECTS.map((v) => <option key={v} value={v}>{v}{v === "9:16" ? " · vertical (default)" : ""}</option>)}
+                  {ASPECTS.map((v) => <option key={v} value={v}>{v}{v === "3:4" ? " · default" : ""}</option>)}
                 </select>
                 <small className="hint">Duration is read from your brief. If omitted, the default is 10 seconds.</small>
               </div>
 
               <button className="toggle" onClick={() => setLiveResearch((v) => !v)} type="button">
-                  <span>Live ad research<small>Disabled in local mode; uses bundled corpus</small></span>
+                  <span>Use current ad references<small>Bring fresh creative patterns into the direction</small></span>
                 <span className={`sw${liveResearch ? " on" : ""}`}><i /></span>
               </button>
 
               <button className="btn" onClick={optimize} disabled={loading}>
-                <Icon name="spark" />{loading ? "Running RAG…" : "Run RAG · optimize prompt"}
+                <Icon name="spark" />{loading ? "Building your direction…" : "1. Build video direction"}
               </button>
               {loading && (
                 <div className="loading-note">
-                  <span className="spin" /> Retrieving from the local corpus + assembling the payload.
+                  <span className="spin" /> Finding the strongest hook and building your video direction.
                 </div>
               )}
               {error && <div className="err">{error}</div>}
-              <p className="hint">Stage 1 engineers the Seedance 2.0 audio-video payload. Stage 2 renders it through Pika.</p>
+              <p className="hint">Next: review the direction, then render your clip.</p>
             </div>
           </section>
 
@@ -453,12 +446,12 @@ export function Studio() {
           <section className="studio-col">
             <div className="panel studio-card">
               <div className="panel-head">
-                <span>VIDEO-MODEL PAYLOAD {result && <span className={result.cached ? "warn" : "ready-tag"}>{result.cached ? "● CACHED" : "● FRESH"}</span>}</span>
-                {result && <button className="copy" onClick={copyPayload}>{copied ? "COPIED ✓" : "COPY"}</button>}
+                <span>02 · VIDEO DIRECTION {result && <span className={result.cached ? "warn" : "ready-tag"}>{result.cached ? "● CACHED" : "● FRESH"}</span>}</span>
+                {result && <button className="copy" onClick={copyPayload}>{copied ? "COPIED ✓" : "COPY PROMPT"}</button>}
               </div>
               {result
                 ? <pre className="payload">{result.video_model_payload}</pre>
-                : <div className="empty-note">Run an optimization to assemble <b>Seedance 2.0 SYSTEM prompt + context (research + vector retrieval) + generation skill</b> — the exact model-ready payload.</div>}
+                : <div className="empty-note"><b>Your creative direction will take shape here.</b> Optimize a brief to see the hook, visual language, shot plan, and a ready-to-render video prompt.</div>}
             </div>
 
             {c && (
@@ -535,12 +528,12 @@ export function Studio() {
 
           {/* ── PIKA OUTPUT (Stage 2 preview) ─────────────────── */}
           <aside className="panel studio-card right">
-            <div className="panel-head"><span>PIKA OUTPUT</span><span className="warn">SEEDANCE 2.0</span></div>
+            <div className="panel-head"><span>03 · YOUR VIDEO</span><span className="warn">SEEDANCE 2.0</span></div>
             <div className="card-body" style={{ paddingBottom: 0 } as CSSProperties}>
               <button className="btn" onClick={generate} disabled={!result || generating}>
-                <Icon name="film" size={14} />{generating ? "Generating…" : "Generate video"}
+                <Icon name="film" size={14} />{generating ? "Rendering your video…" : "2. Generate video"}
               </button>
-              {!result && <p className="hint">Optimize a brief first, then Generate.</p>}
+              {!result && <p className="hint">Available after you build the video direction.</p>}
               {generating && <div className="loading-note"><span className="spin" /> Rendering Seedance 2.0 at 1080p — usually 1–5 min.</div>}
               {genStatus && <div className="err">{genStatus}</div>}
             </div>

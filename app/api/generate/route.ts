@@ -1,7 +1,9 @@
 import { spawn } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { NextResponse } from "next/server";
 
-import { readSettings } from "@/app/lib/regen";
+import { readSettings, sourceDir } from "@/app/lib/regen";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -29,6 +31,22 @@ const JSON_HEADERS = {
 const ROOT = process.cwd();
 // Leave headroom under maxDuration so we kill a stuck agent and still respond.
 const AGENT_TIMEOUT_MS = 285_000;
+
+// Provider-hosted URLs are often playable in a <video> tag but blocked from a
+// browser fetch by CORS. Save each completed render behind our own origin so it
+// can move reliably from Create into the file-based Refine workflow.
+async function cacheGeneratedVideo(url: string): Promise<string> {
+  const response = await fetch(url, { cache: "no-store" });
+  if (!response.ok) throw new Error(`The video provider returned ${response.status} while loading the render.`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (!bytes.length) throw new Error("The video provider returned an empty render.");
+
+  const id = `generated_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+  const dir = sourceDir(id);
+  await mkdir(path.join(dir, "frames"), { recursive: true });
+  await writeFile(path.join(dir, "source.mp4"), bytes);
+  return `/api/regenerate/file?source=${id}&name=source.mp4`;
+}
 
 type GenBody = { prompt?: string; aspect_ratio?: string; duration_seconds?: number };
 
@@ -134,7 +152,7 @@ export async function POST(request: Request) {
   const prompt = (body.prompt || "").trim();
   if (!prompt) return NextResponse.json({ status: "error", message: "Prompt is empty." }, { status: 422, headers: JSON_HEADERS });
 
-  const aspect = body.aspect_ratio && VALID_ASPECTS.has(body.aspect_ratio) ? body.aspect_ratio : "9:16";
+  const aspect = body.aspect_ratio && VALID_ASPECTS.has(body.aspect_ratio) ? body.aspect_ratio : "3:4";
   const duration = Math.max(4, Math.min(15, Math.round(body.duration_seconds || 10)));
 
   const settings = await readSettings();
@@ -150,10 +168,16 @@ export async function POST(request: Request) {
   const result = await runAgent(resolved.agent, resolved.cmd, promptText);
 
   if (result.url) {
-    return NextResponse.json(
-      { status: "completed", video_url: result.url, provider: settings.provider, agent: resolved.agent },
-      { headers: JSON_HEADERS },
-    );
+    try {
+      const localVideoUrl = await cacheGeneratedVideo(result.url);
+      return NextResponse.json(
+        { status: "completed", video_url: localVideoUrl, provider: settings.provider, agent: resolved.agent },
+        { headers: JSON_HEADERS },
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The generated video could not be prepared for refining.";
+      return NextResponse.json({ status: "error", message }, { status: 502, headers: JSON_HEADERS });
+    }
   }
   return NextResponse.json(
     { status: "error", message: result.reason || "Generation failed.", agent: resolved.agent },
