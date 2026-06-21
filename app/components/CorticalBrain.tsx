@@ -16,6 +16,9 @@ export function CorticalBrain({ familyLevels, intensity }: { familyLevels?: numb
   const [meshName, setMeshName] = useState("fsaverage");
   const targetLevels = useRef<number[]>([0, 0, 0, 0]);
   const latestIntensity = useRef(intensity);
+  // Set by the WebGL mount; the reset button calls it to animate the camera and
+  // orientation back to their defaults.
+  const resetView = useRef<() => void>(() => {});
 
   useEffect(() => {
     latestIntensity.current = intensity;
@@ -160,14 +163,50 @@ export function CorticalBrain({ familyLevels, intensity }: { familyLevels?: numb
       box.getCenter(center);
       meshes.forEach(({ mesh }) => mesh.geometry.translate(-center.x, -center.y, -center.z));
 
+      // Open the default view posteriorly: turn the outer group halfway around.
+      // (The fixed forward tilt on `oriented` keeps the brain standing upright.)
+      brain.rotation.y = Math.PI;
+
+      // Camera-distance zoom: the camera dollies along its view axis between a
+      // close and far stop, eased each frame toward `targetDist`.
+      const DEFAULT_DIST = 4.5;
+      const MIN_DIST = 2.8;
+      const MAX_DIST = 6.5;
+      let targetDist = DEFAULT_DIST;
+      // Default orientation + a one-shot eased "reset" tumble back to it.
+      const defaultQuat = brain.quaternion.clone();
+      const fromQuat = new THREE.Quaternion();
+      let resetT = 1; // >= 1 means no reset animation in flight
+
       let dragging = false;
-      // The forward tilt maps the cortical anterior surface toward the camera.
-      // Turn the outer group halfway around so the default opens posteriorly.
-      let lastX = 0; let lastY = 0; let yaw = Math.PI; let pitch = oriented.rotation.x;
-      const down = (event: PointerEvent) => { dragging = true; lastX = event.clientX; lastY = event.clientY; canvas.setPointerCapture(event.pointerId); };
-      const move = (event: PointerEvent) => { if (!dragging) return; yaw += (event.clientX - lastX) * .008; pitch = THREE.MathUtils.clamp(pitch + (event.clientY - lastY) * .006, -2.5, -0.4); lastX = event.clientX; lastY = event.clientY; };
+      let lastX = 0; let lastY = 0;
+      // Screen-relative trackball. Yaw is taken about the screen's vertical axis
+      // and pitch about its horizontal axis, and each delta is *pre*-multiplied
+      // onto the brain's quaternion so it rotates about the world (camera) axes
+      // rather than the brain's own. That is what keeps up/down consistent no
+      // matter which way the brain is currently facing -- applying pitch to a
+      // local axis inverted it once the brain had been turned roughly 180.
+      const screenYaw = new THREE.Vector3(0, 1, 0);
+      const screenPitch = new THREE.Vector3(1, 0, 0);
+      const dq = new THREE.Quaternion();
+      const down = (event: PointerEvent) => { resetT = 1; dragging = true; lastX = event.clientX; lastY = event.clientY; canvas.setPointerCapture(event.pointerId); };
+      const move = (event: PointerEvent) => {
+        if (!dragging) return;
+        dq.setFromAxisAngle(screenYaw, (event.clientX - lastX) * .008);
+        brain.quaternion.premultiply(dq);
+        dq.setFromAxisAngle(screenPitch, (event.clientY - lastY) * .008);
+        brain.quaternion.premultiply(dq);
+        lastX = event.clientX; lastY = event.clientY;
+      };
       const up = () => { dragging = false; };
-      canvas.addEventListener("pointerdown", down); canvas.addEventListener("pointermove", move); canvas.addEventListener("pointerup", up); canvas.addEventListener("pointerleave", up);
+      // Scroll / pinch-zoom: multiplicative so each notch feels even at any
+      // distance. deltaY < 0 (scroll up) zooms in; preventDefault stops the
+      // page from scrolling under the canvas.
+      const wheel = (event: WheelEvent) => { event.preventDefault(); targetDist = THREE.MathUtils.clamp(targetDist * (1 + event.deltaY * .0012), MIN_DIST, MAX_DIST); };
+      canvas.addEventListener("pointerdown", down); canvas.addEventListener("pointermove", move); canvas.addEventListener("pointerup", up); canvas.addEventListener("pointerleave", up); canvas.addEventListener("wheel", wheel, { passive: false });
+
+      // Animate orientation + zoom back to the opening view.
+      resetView.current = () => { dragging = false; fromQuat.copy(brain.quaternion); resetT = 0; targetDist = DEFAULT_DIST; };
 
       const resize = () => { const rect = canvas.getBoundingClientRect(); renderer.setSize(rect.width, rect.height, false); camera.aspect = rect.width / rect.height; camera.updateProjectionMatrix(); };
       const observer = new ResizeObserver(resize); observer.observe(canvas); resize();
@@ -186,23 +225,30 @@ export function CorticalBrain({ familyLevels, intensity }: { familyLevels?: numb
         levels.y += (t[1] - levels.y) * k;
         levels.z += (t[2] - levels.z) * k;
         levels.w += (t[3] - levels.w) * k;
-        // Brain stays at a fixed orientation; the user can still drag to rotate.
-        brain.rotation.y = yaw; oriented.rotation.x = pitch;
+        // Ease the camera dolly toward the current zoom target.
+        camera.position.z += (targetDist - camera.position.z) * (1 - Math.pow(0.0025, dt));
+        // Run the reset tumble if one was requested (ease-out cubic over ~0.45s).
+        if (resetT < 1) {
+          resetT = Math.min(1, resetT + dt / 0.45);
+          brain.quaternion.slerpQuaternions(fromQuat, defaultQuat, 1 - Math.pow(1 - resetT, 3));
+        }
+        // Orientation otherwise persists on brain.quaternion, set by the drag handler.
         renderer.render(scene, camera);
         animation = requestAnimationFrame(render);
       };
       animation = requestAnimationFrame(render);
       setState("ready");
-      cleanup = () => { observer.disconnect(); canvas.removeEventListener("pointerdown", down); canvas.removeEventListener("pointermove", move); canvas.removeEventListener("pointerup", up); canvas.removeEventListener("pointerleave", up); meshes.forEach(({ mesh }) => { mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose(); }); renderer.dispose(); };
+      cleanup = () => { observer.disconnect(); canvas.removeEventListener("pointerdown", down); canvas.removeEventListener("pointermove", move); canvas.removeEventListener("pointerup", up); canvas.removeEventListener("pointerleave", up); canvas.removeEventListener("wheel", wheel); meshes.forEach(({ mesh }) => { mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose(); }); renderer.dispose(); };
     }
     mount();
     return () => { disposed = true; cancelAnimationFrame(animation); cleanup(); };
   }, []);
 
   return <div className="cortical-wrap">
-    <canvas ref={canvasRef} className="cortical-canvas" aria-label="Interactive fsaverage cortical surface; drag to rotate" />
+    <canvas ref={canvasRef} className="cortical-canvas" aria-label="Interactive fsaverage cortical surface; drag to rotate, scroll to zoom" />
     <div className={`surface-status ${state}`}>{state === "loading" ? "LOADING FSAVERAGE SURFACE" : state === "fallback" ? "SURFACE OFFLINE · PREVIEW MODE" : `${meshName.toUpperCase()} PIAL · WEBGL SURFACE`}</div>
-    <div className="surface-instruction">DRAG TO ROTATE</div>
+    <button type="button" className="surface-reset" onClick={() => resetView.current()} aria-label="Reset view to default orientation and zoom">RESET VIEW</button>
+    <div className="surface-instruction">DRAG TO ROTATE · SCROLL TO ZOOM</div>
     <div className="activity-legend">
       <div className="legend-scale"><span>Low</span><span>High</span></div>
       <div className="legend-bar" />

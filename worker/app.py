@@ -6,6 +6,7 @@ surface tensor to a browser. The model still runs its full cortical prediction.
 
 import os
 import tempfile
+import threading
 from contextlib import asynccontextmanager
 from functools import lru_cache
 from pathlib import Path
@@ -23,21 +24,60 @@ CACHE_DIR = os.getenv("TRIBEV2_CACHE_DIR", str(Path(__file__).resolve().parent /
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(1_000_000_000)))
 model: TribeModel | None = None
 
-# Cortical surface proxy regions. TRIBE v2 predicts average-subject responses
-# on the fsaverage5 cortical mesh; these manually defined regions are display
-# summaries only. They are not direct measurements of reward, emotion,
-# self-relevance, memory encoding, or subcortical structures.
+
+def _configure_mac_ffmpeg() -> None:
+    """WhisperX's VAD uses torchcodec, which needs FFmpeg 4-7 (libavutil 56-59).
+    Homebrew's default ffmpeg is now v8 (libavutil 60), which torchcodec cannot
+    load. On macOS, if a compatible ffmpeg@N is installed, expose its libs to the
+    WhisperX subprocess via DYLD_FALLBACK_LIBRARY_PATH. No-op off macOS and on
+    GPU/Linux boxes, where the system FFmpeg already works (device-adaptive)."""
+    import glob
+    import sys
+
+    if sys.platform != "darwin":
+        return
+    found = []
+    for opt in ("/opt/homebrew/opt", "/usr/local/opt"):
+        for ver in ("ffmpeg@7", "ffmpeg@6", "ffmpeg@5", "ffmpeg@4"):
+            libdir = Path(opt) / ver / "lib"
+            if libdir.is_dir() and glob.glob(str(libdir / "libavutil.5*.dylib")):
+                found.append(str(libdir))
+    if not found:
+        return
+    existing = os.environ.get("DYLD_FALLBACK_LIBRARY_PATH", "")
+    os.environ["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(found + ([existing] if existing else []))
+
+
+_configure_mac_ffmpeg()
+
+# Engagement families defined on TRIBE v2's native output space (the fsaverage5
+# cortical surface) using the model authors' built-in HCP-MMP / Glasser atlas
+# (tribev2.utils.get_hcp_labels), instead of hand-placed spheres. Each family is
+# the union of named Glasser parcels (wildcards: "STG*" matches STGa, STGda, ...),
+# chosen from the engagement-neuroscience literature.
 #
-# Each entry: key, display label, side-panel colour, and a centre
-# (|x| laterality, y anterior, z superior, radius) in FreeSurfer surface mm,
-# projected onto the visible cortical mesh for the WebGL viewer.
+# `reliability` records how well TRIBE itself predicts that territory (paper
+# Sec. 3.2-3.3: auditory/language are near the noise ceiling; association areas
+# are well predicted by the multimodal model; primary visual is weaker, so it is
+# intentionally excluded from the visual family). It is surfaced to the user as
+# an honest confidence note ONLY and does NOT weight the score -- all four
+# families contribute equally.
 ENGAGEMENT_FAMILIES = [
-    {"key": "reward_desire",       "name": "Ventromedial PFC proxy", "short": "vmPFC", "color": "#ffb13b", "centroid": (15.0, 56.0, -10.0, 28.0)},
-    {"key": "emotional_response",  "name": "Anterior temporal proxy", "short": "aTEMP", "color": "#ff5a7a", "centroid": (46.0, 12.0, -20.0, 30.0)},
-    {"key": "personal_relevance",  "name": "Lateral PFC proxy",      "short": "lPFC", "color": "#9b8cff", "centroid": (40.0, 30.0, 40.0, 28.0)},
-    {"key": "memory_encoding",     "name": "Ventral temporal proxy", "short": "vTEMP", "color": "#3fd6c0", "centroid": (47.0, -42.0, -10.0, 28.0)},
+    {"key": "auditory_engagement", "name": "Auditory / speech-music", "short": "AUD",  "color": "#ffb13b",
+     "reliability": "high",   "rois": ["A1", "MBelt", "LBelt", "PBelt", "A4", "A5", "STG*", "STS*"]},
+    {"key": "language_message",    "name": "Language / message",      "short": "LANG", "color": "#ff5a7a",
+     "reliability": "high",   "rois": ["44", "45", "47l", "IFS*", "IFJ*"]},
+    {"key": "attention_salience",  "name": "Attention + salience",    "short": "ATTN", "color": "#9b8cff",
+     "reliability": "medium", "rois": ["IPS*", "LIP*", "VIP", "FEF", "6a", "AVI", "MI", "FOP*", "a24pr", "p24pr", "PFm", "PGi", "PGs", "TPOJ*"]},
+    {"key": "visual_motion",       "name": "Visual / motion",        "short": "VIS",  "color": "#3fd6c0",
+     "reliability": "medium", "rois": ["MT", "MST", "V4t", "FST", "LO*", "V3CD"]},
 ]
-_FAMILY_CENTROIDS = [f["centroid"] for f in ENGAGEMENT_FAMILIES]
+
+# Within-video scale: a family-mean response this many SDs above the region's own
+# baseline maps to a score of 100. Fixed and shared across the four families so
+# they are directly comparable within a clip. (Cross-video comparability needs a
+# fixed reference set computed over many clips -- deferred to a later step.)
+ENGAGEMENT_Z_REF = 2.0
 
 
 # fsaverage mesh resolution for the WebGL viewer. fsaverage5 (10,242 vertices
@@ -50,35 +90,112 @@ SURFACE_MESH = os.getenv("TRIBEV2_SURFACE_MESH", "fsaverage5")
 _MESH_VERTICES = {"fsaverage4": 2562, "fsaverage5": 10242, "fsaverage6": 40962}
 
 
-def _assign_families(coords: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Label each vertex with the nearest cognitive family and a 0..1 falloff
-    weight (1 at the territory centre → 0 at its edge), so activation fades
-    smoothly into a heat-map gradient rather than a hard-edged patch."""
-    x, y, z = coords[:, 0], coords[:, 1], coords[:, 2]
-    best = np.full(coords.shape[0], -1, dtype=np.int8)
-    best_dist = np.full(coords.shape[0], np.inf, dtype=np.float32)
-    for family, (mag, cy, cz, radius) in enumerate(_FAMILY_CENTROIDS):
-        cx = np.sign(x + 1e-6) * mag  # lateralise the centre to each hemisphere
-        dist = np.sqrt((x - cx) ** 2 + (y - cy) ** 2 + (z - cz) ** 2) / radius
-        closer = dist < np.minimum(best_dist, 1.0)
-        best[closer] = family
-        best_dist[closer] = dist[closer]
-    weight = np.clip(1.0 - best_dist, 0.0, 1.0).astype(np.float32)
-    return best, weight
+_HCP_LOCK = threading.Lock()
+
+
+def _build_hcp_labels() -> dict:
+    """Replicate tribev2.utils.get_hcp_labels WITHOUT its ~1.65 GB MNE *sample*
+    dataset download. We only need a subjects_dir that contains `fsaverage`, so we
+    use the small `fetch_fsaverage` (~tens of MB) + the HCP-MMP annotation, then
+    apply the same fsaverage->fsaverage5 downsample (keep vertices < 10242) and
+    left/right stacking. Result is cached to an .npz so later starts need no MNE.
+    """
+    cache_file = Path(CACHE_DIR) / "hcp_fsaverage5_labels.npz"
+    if cache_file.exists():
+        data = np.load(cache_file, allow_pickle=False)
+        return {k[4:]: data[k] for k in data.files}  # strip the "roi_" key prefix
+
+    import mne
+
+    fs5 = _MESH_VERTICES["fsaverage5"]  # 10242 vertices per hemisphere
+    subjects_dir = Path(CACHE_DIR) / "mne_subjects"
+    subjects_dir.mkdir(parents=True, exist_ok=True)
+    mne.datasets.fetch_fsaverage(subjects_dir=str(subjects_dir), verbose=False)
+    mne.datasets.fetch_hcp_mmp_parcellation(
+        subjects_dir=str(subjects_dir), accept=True, verbose=False
+    )
+    labels = mne.read_labels_from_annot(
+        "fsaverage", "HCPMMP1", hemi="both", subjects_dir=str(subjects_dir), verbose=False
+    )
+
+    out: dict[str, list] = {}
+    for label in labels:
+        name = label.name[2:].replace("_ROI", "")  # strip "L_"/"R_" prefix + "_ROI"
+        if "-lh" in name:
+            offset = 0
+        elif "-rh" in name:
+            offset = fs5
+        else:
+            continue
+        bare = name.replace("-rh", "").replace("-lh", "")
+        if not bare or "?" in bare:  # skip the medial-wall / unknown label
+            continue
+        verts = np.asarray(label.vertices)
+        verts = verts[verts < fs5] + offset  # fsaverage meshes are nested: <fs5 == fsaverage5
+        out.setdefault(bare, []).append(verts)
+    merged = {k: np.concatenate(vs).astype(np.int64) for k, vs in out.items()}
+
+    Path(CACHE_DIR).mkdir(parents=True, exist_ok=True)
+    np.savez(cache_file, **{f"roi_{k}": v for k, v in merged.items()})
+    return merged
+
+
+@lru_cache(maxsize=1)
+def _hcp_labels() -> dict:
+    """{bare Glasser ROI name -> vertex indices into the stacked 20484-vertex
+    fsaverage5 array (left 0..10241, right 10242..20483)}. Built once; the lock +
+    on-disk .npz cache make concurrent first-calls single-flight, so a FastAPI
+    threadpool can't trigger duplicate MNE downloads (the original bug)."""
+    with _HCP_LOCK:
+        return _build_hcp_labels()
+
+
+def _match_rois(patterns, keys: list[str]) -> list[str]:
+    """Resolve ROI name patterns (supporting a leading or trailing '*') to the
+    concrete Glasser parcel names present in the atlas."""
+    out: list[str] = []
+    for p in patterns:
+        if p.endswith("*"):
+            matched = [k for k in keys if k.startswith(p[:-1])]
+        elif p.startswith("*"):
+            matched = [k for k in keys if k.endswith(p[1:])]
+        else:
+            matched = [k for k in keys if k == p]
+        if not matched:
+            print(f"[scoring] warning: ROI pattern {p!r} matched no Glasser parcel")
+        out.extend(matched)
+    return sorted(set(out))
+
+
+@lru_cache(maxsize=1)
+def _family_rois() -> list[dict]:
+    """Per family: {parcel_name -> vertex indices}. Kept per-parcel so we can
+    average within a parcel before averaging across parcels (parcel-balanced, so
+    a large parcel doesn't dominate a family)."""
+    labels = _hcp_labels()
+    keys = list(labels.keys())
+    families = []
+    for fam in ENGAGEMENT_FAMILIES:
+        names = _match_rois(fam["rois"], keys)
+        families.append({n: np.asarray(labels[n], dtype=np.int64) for n in names})
+    return families
 
 
 @lru_cache(maxsize=1)
 def _family_data_fs5() -> tuple[np.ndarray, np.ndarray]:
-    """Per-vertex family + falloff weight over fsaverage5 (left then right)."""
-    from nilearn.datasets import fetch_surf_fsaverage
-    from nilearn.surface import load_surf_mesh
-
-    fsaverage = fetch_surf_fsaverage(mesh="fsaverage5", data_dir=str(Path(CACHE_DIR) / "nilearn"))
-    left, _ = load_surf_mesh(fsaverage.pial_left)
-    right, _ = load_surf_mesh(fsaverage.pial_right)
-    fam_l, w_l = _assign_families(left)
-    fam_r, w_r = _assign_families(right)
-    return np.concatenate([fam_l, fam_r]), np.concatenate([w_l, w_r])
+    """Per-vertex family label (0..3, or -1 for none) + weight (1 inside a family
+    ROI, else 0) over the stacked fsaverage5 surface, for the WebGL viewer. Built
+    from the same Glasser parcels used for scoring; on a rare overlapping vertex
+    the earlier family wins."""
+    n_vertices = 2 * _MESH_VERTICES["fsaverage5"]
+    families = np.full(n_vertices, -1, dtype=np.int8)
+    weights = np.zeros(n_vertices, dtype=np.float32)
+    for fi, parcels in enumerate(_family_rois()):
+        for idx in parcels.values():
+            unassigned = idx[families[idx] < 0]
+            families[unassigned] = fi
+            weights[unassigned] = 1.0
+    return families, weights
 
 
 @lru_cache(maxsize=1)
@@ -127,6 +244,12 @@ async def lifespan(_: FastAPI):
     global model
     # This is deliberately loaded once: weights and feature extractors are large.
     model = TribeModel.from_pretrained(MODEL_ID, cache_folder=CACHE_DIR)
+    # Build the atlas->vertex mapping once, at startup, so no request ever triggers
+    # it from the threadpool (which previously spawned duplicate MNE downloads).
+    try:
+        _family_rois()
+    except Exception as exc:  # don't block startup; first request will retry
+        print(f"[scoring] atlas warmup failed (will retry on request): {exc}")
     yield
     model = None
 
@@ -169,53 +292,69 @@ def resample_to_mesh(values: np.ndarray, hemi: str, source_vertices: int) -> np.
 
 
 def build_response(predictions: np.ndarray) -> dict:
-    """Summarise predicted surface responses over four display proxy regions."""
-    assert model is not None
-    # Standardize globally only for visualization; raw fMRI-like values remain
-    # available on the worker if an export endpoint is added later.
-    mean = predictions.mean()
-    std = predictions.std() or 1.0
-    z = np.abs((predictions - mean) / std)
-    global_trace = np.clip(z.mean(axis=1) * 28 + 18, 0, 100)
+    """Summarise predicted surface responses over the four engagement families.
 
-    # Per-engagement-system response over time, grouped by the cortical
-    # territories the viewer lights up. Normalised jointly so the dominant
-    # system reads brightest on the brain.
-    families, _ = _family_data_fs5()
-    keys = [f["key"] for f in ENGAGEMENT_FAMILIES]
-    traces = np.zeros((len(keys), z.shape[0]), dtype=np.float32)
-    for i in range(len(keys)):
-        mask = families == i
-        if mask.any():
-            traces[i] = z[:, mask].mean(axis=1)
-    scale = float(traces.max()) or 1.0
-    norm = np.round(traces / scale * 100, 1)
+    Within-video, signed, per-vertex baseline: each vertex is z-scored against
+    its OWN response over the clip, so a family trace reflects how far that
+    territory rises above its baseline (positive = engaged; deactivation is not
+    counted as engagement). Traces are parcel-balanced and placed on one fixed
+    0..100 scale (ENGAGEMENT_Z_REF) so the four families are directly comparable.
+    All four are weighted equally; `reliability` is reported but never weights the
+    score. Overall engagement is the equal-weighted mean of the four families.
+    """
+    assert model is not None
+    pred = np.asarray(predictions, dtype=np.float64)
+    n_frames = int(pred.shape[0])
+
+    # Per-vertex temporal baseline (signed): (value - vertex mean) / vertex SD.
+    mu = pred.mean(axis=0, keepdims=True)
+    sd = pred.std(axis=0, keepdims=True)
+    sd[sd < 1e-6] = 1e-6
+    z = (pred - mu) / sd  # (T, V) signed; > 0 means above this vertex's baseline
+
+    families = _family_rois()
+    traces = np.zeros((len(ENGAGEMENT_FAMILIES), n_frames), dtype=np.float32)
+    for i, parcels in enumerate(families):
+        if not parcels:
+            continue
+        # Mean within each parcel, then mean across parcels (parcel-balanced).
+        parcel_means = [z[:, idx].mean(axis=1) for idx in parcels.values()]
+        fam_z = np.mean(np.stack(parcel_means, axis=0), axis=0)
+        # Positive engagement only, on the fixed shared scale.
+        traces[i] = np.clip(100.0 * np.maximum(fam_z, 0.0) / ENGAGEMENT_Z_REF, 0, 100)
 
     regions = []
     cognitive_series = {}
     for i, fam in enumerate(ENGAGEMENT_FAMILIES):
-        values = norm[i].tolist()
+        values = np.round(traces[i], 1).tolist()
         cognitive_series[fam["key"]] = values
         regions.append({
             "name": fam["name"],
             "short": fam["short"],
             "color": fam["color"],
-            "score": round(float(norm[i].max()), 1),
+            "reliability": fam["reliability"],
+            "score": round(float(traces[i].mean()), 1) if n_frames else 0.0,
             "values": values,
         })
+
+    # Overall engagement = equal-weighted mean of the four families (no
+    # reliability weighting, per design).
+    global_trace = traces.mean(axis=0)
+    engagement_score = round(float(np.mean([r["score"] for r in regions])), 1)
     regions.sort(key=lambda r: r["score"], reverse=True)
 
     tr = float(model.data.TR)
-    peak_index = int(np.argmax(global_trace))
+    peak_index = int(np.argmax(global_trace)) if n_frames else 0
     peak_label = regions[0]["short"] if regions else "CORTEX"
     return {
-        "duration": round(len(global_trace) * tr, 2),
-        "frames": int(len(global_trace)),
+        "duration": round(n_frames * tr, 2),
+        "frames": n_frames,
         "source": "model",
+        "engagementScore": engagement_score,
         "global": np.round(global_trace, 2).tolist(),
         "regions": regions,
         "cognitiveSeries": cognitive_series,
-        "peak": {"time": round(peak_index * tr, 2), "label": peak_label, "value": round(float(global_trace[peak_index]), 2)},
+        "peak": {"time": round(peak_index * tr, 2), "label": peak_label, "value": round(float(global_trace[peak_index]), 2) if n_frames else 0.0},
     }
 
 

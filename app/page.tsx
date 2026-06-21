@@ -13,16 +13,17 @@ type Analysis = {
   peak: { time: number; label: string; value: number };
   source: "demo" | "model";
   cognitiveSeries?: Record<string, number[]>;
+  engagementScore?: number;
 };
 
 // Cortical surface proxy regions, in the worker's family order. These are
 // descriptive surface summaries, not direct measurements of cognitive states
 // or subcortical structures.
 const FAMILY_DETAILS = [
-  { key: "reward_desire", name: "Ventromedial PFC proxy", short: "vmPFC", anatomy: "Ventromedial prefrontal cortex", impact: "A cortical surface summary centered on ventromedial prefrontal territory. It is not a direct readout of reward, desire, or buying intent.", blurb: "This proxy tracks the model’s predicted response in a ventromedial prefrontal surface region." },
-  { key: "emotional_response", name: "Anterior temporal proxy", short: "aTEMP", anatomy: "Anterior temporal cortex", impact: "A cortical surface summary centered on anterior temporal territory. It does not measure the amygdala or an emotional state.", blurb: "This proxy tracks the model’s predicted response in an anterior temporal surface region." },
-  { key: "personal_relevance", name: "Lateral PFC proxy", short: "lPFC", anatomy: "Lateral prefrontal cortex", impact: "A cortical surface summary centered on lateral prefrontal territory. It is not a direct assessment of personal relevance.", blurb: "This proxy tracks the model’s predicted response in a lateral prefrontal surface region." },
-  { key: "memory_encoding", name: "Ventral temporal proxy", short: "vTEMP", anatomy: "Ventral temporal cortex", impact: "A cortical surface summary centered on ventral temporal territory. It cannot establish later memory or memory encoding.", blurb: "This proxy tracks the model’s predicted response in a ventral temporal surface region." },
+  { key: "auditory_engagement", name: "Auditory / speech-music", short: "AUD", reliability: "high", anatomy: "Auditory cortex (A1, belt areas, STG/STS)", impact: "Predicted response across auditory cortex — voiceover, music, sound design. TRIBE predicts this territory near its noise ceiling, so it is the most trustworthy signal.", blurb: "Tracks predicted engagement of auditory/speech regions as the clip plays." },
+  { key: "language_message", name: "Language / message", short: "LANG", reliability: "high", anatomy: "Language network (IFG 44/45/47l, IFS/IFJ)", impact: "Predicted response across language regions — how the spoken/written message is processed. Among TRIBE's most reliably predicted areas.", blurb: "Tracks predicted engagement of language regions carrying the message." },
+  { key: "attention_salience", name: "Attention + salience", short: "ATTN", reliability: "medium", anatomy: "Attention & salience (IPS/FEF, insula/dACC, TPJ)", impact: "Predicted response across attention and salience networks — the hook (capture) and sustained attention (hold). Well predicted by the multimodal model.", blurb: "Tracks predicted engagement of attention/salience regions over time." },
+  { key: "visual_motion", name: "Visual / motion", short: "VIS", reliability: "medium", anatomy: "Higher visual & motion areas (MT/MST, V4t, FST, LO, V3CD)", impact: "Predicted response across motion-sensitive and higher visual areas — visual dynamics and cuts. Primary visual (V1) is excluded because TRIBE predicts it less reliably under the multimodal model.", blurb: "Tracks predicted engagement of motion/higher-visual regions." },
 ] as const;
 const FAMILY_KEYS = FAMILY_DETAILS.map((f) => f.key);
 const FILMSTRIP_FRAME_COUNT = 24;
@@ -49,7 +50,7 @@ function wave(base: number, amp: number, freq: number, phase: number): number[] 
 function buildAnalysis(seriesArr: number[][], duration: number, source: "demo" | "model", scheme: ColorSchemeId = DEFAULT_COLOR_SCHEME): Analysis {
   const families = familiesForScheme(scheme);
   const global = Array.from({ length: 64 }, (_, i) => Math.round(seriesArr.reduce((s, a) => s + a[i], 0) / seriesArr.length));
-  const regions: Region[] = families.map((f, i) => ({ name: f.name, short: f.short, color: f.color, values: seriesArr[i], score: Math.max(...seriesArr[i]) }));
+  const regions: Region[] = families.map((f, i) => ({ name: f.name, short: f.short, color: f.color, values: seriesArr[i], score: Math.round(seriesArr[i].reduce((a, b) => a + b, 0) / seriesArr[i].length) }));
   const cognitiveSeries = Object.fromEntries(families.map((f, i) => [f.key, seriesArr[i]]));
   let peakIndex = 0;
   global.forEach((v, i) => { if (v > global[peakIndex]) peakIndex = i; });
@@ -76,8 +77,11 @@ function createDemoForFile(file: File, scheme: ColorSchemeId): Analysis {
 }
 
 function engagementScore(a: Analysis): number {
-  const peaks = FAMILY_KEYS.map((k) => Math.max(0, ...(a.cognitiveSeries?.[k] ?? [0])));
-  return Math.round(peaks.reduce((s, v) => s + v, 0) / peaks.length);
+  const avgs = FAMILY_KEYS.map((k) => {
+    const s = a.cognitiveSeries?.[k] ?? [0];
+    return s.reduce((acc, v) => acc + v, 0) / Math.max(1, s.length);
+  });
+  return Math.round(avgs.reduce((s, v) => s + v, 0) / avgs.length);
 }
 
 function Icon({ name, size = 18 }: { name: "upload" | "play" | "pause" | "chevron" | "reset" | "info" | "close" | "settings" | "check"; size?: number }) {
@@ -121,6 +125,7 @@ export default function Home() {
   const [showInfo, setShowInfo] = useState(false);
   const [showAppearance, setShowAppearance] = useState(false);
   const [timelineMode, setTimelineMode] = useState<"net" | "split">("net");
+  const [elapsed, setElapsed] = useState(0);
   const videoRef = useRef<HTMLVideoElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const activeScheme = COLOR_SCHEMES[colorScheme];
@@ -133,7 +138,7 @@ export default function Home() {
   const dominant = families[domIdx];
   const active = analysis.regions[regionIndex] ?? analysis.regions[0];
   const activeFamily = families.find((family) => family.short === active.short) ?? families[0];
-  const score = useMemo(() => engagementScore(analysis), [analysis]);
+  const score = useMemo(() => analysis.engagementScore ?? engagementScore(analysis), [analysis]);
   const status = "TRIBE V2";
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
@@ -164,6 +169,14 @@ export default function Home() {
     }, 66);
     return () => clearInterval(id);
   }, [isPlaying, analysis.duration]);
+
+  // Elapsed-time counter for the loading banner while a real (slow) analysis runs.
+  useEffect(() => {
+    if (!isAnalyzing) { setElapsed(0); return; }
+    const t0 = performance.now();
+    const id = setInterval(() => setElapsed(Math.floor((performance.now() - t0) / 1000)), 1000);
+    return () => clearInterval(id);
+  }, [isAnalyzing]);
 
   async function runAnalysis(selected: File) {
     setAnalyzing(true);
@@ -236,7 +249,7 @@ export default function Home() {
       <div className="topbar-right">
         <div className="model-pill"><span className="live-dot"/>{status}</div>
         <div className="topbar-score">
-        <div><span className="score-label">ENGAGEMENT SCORE</span><span className="score-foot">Four-system peak</span></div>
+        <div><span className="score-label">ENGAGEMENT SCORE</span><span className="score-foot">Four-system average</span></div>
         <strong>{score}<small>/100</small></strong>
         </div>
         <div className="appearance-control">
@@ -254,6 +267,15 @@ export default function Home() {
       </div>
     </header>
 
+    {isAnalyzing && <div style={{ display: "flex", alignItems: "center", gap: 14, padding: "10px 20px", background: "rgba(0,0,0,0.28)", borderBottom: "1px solid rgba(255,255,255,0.08)", fontSize: 13 }}>
+      <style>{`@keyframes cerebra-ind{0%{left:-30%}100%{left:100%}}`}</style>
+      <span style={{ fontWeight: 600, whiteSpace: "nowrap" }}>Analyzing… {formatTime(elapsed)}</span>
+      <div style={{ position: "relative", flex: 1, height: 6, borderRadius: 99, overflow: "hidden", background: "rgba(255,255,255,0.12)" }}>
+        <i style={{ position: "absolute", top: 0, height: "100%", width: "30%", borderRadius: 99, background: "var(--chart-line, #6ee7d6)", animation: "cerebra-ind 1.2s ease-in-out infinite" }}/>
+      </div>
+      <small style={{ opacity: 0.7, whiteSpace: "nowrap" }}>Real TRIBE inference on CPU — can take several minutes; keep this tab open</small>
+    </div>}
+
     <section className="workspace-grid">
       <aside className="left-rail">
         <div className="panel upload-panel">
@@ -265,7 +287,7 @@ export default function Home() {
           </div>
           {file && <div className="file-row"><span className="file-kind">{(file.name.split(".").pop() || "MP4").toUpperCase().slice(0, 4)}</span><span className="file-name">{file.name}</span><span className="file-size">{(file.size / 1024 / 1024).toFixed(1)} MB</span></div>}
         </div>
-        <div className="panel details-panel"><div className="panel-head"><span>RUN DETAILS</span><button onClick={reset} aria-label="Reset"><Icon name="reset" size={16}/></button></div><dl><div><dt>Model</dt><dd>facebook/tribev2</dd></div><div><dt>Surface</dt><dd>fsaverage5</dd></div><div><dt>Resolution</dt><dd>0.5 s / frame</dd></div><div><dt>Readout</dt><dd>Population average</dd></div></dl></div>
+        <div className="panel details-panel"><div className="panel-head"><span>RUN DETAILS</span><button onClick={reset} aria-label="Reset"><Icon name="reset" size={16}/></button></div><dl><div><dt>Model</dt><dd>facebook/tribev2</dd></div><div><dt>Surface</dt><dd>fsaverage5</dd></div><div><dt>Resolution</dt><dd>{(analysis.duration / Math.max(1, analysis.frames)).toFixed(2)} s / frame</dd></div><div><dt>Readout</dt><dd>Population average</dd></div></dl></div>
       </aside>
 
       <section className="editor-deck">
@@ -289,7 +311,7 @@ export default function Home() {
         </div>
         <div className="system-insights">
           <div className="panel signal-panel"><div className="signal-title"><div><span className="eyebrow">SYSTEM SIGNAL</span><strong style={{ color: active.color }}>{active.name} <span>●</span></strong></div><span className="signal-number">{(active.values[currentIndex] ?? 0).toFixed(0)}</span></div><div className="circuitry"><span>CIRCUITRY</span><strong>{activeFamily.anatomy}</strong><p>{activeFamily.impact}</p></div><svg className="mini-chart" viewBox="0 0 260 56" preserveAspectRatio="none"><path d="M0 16H260M0 38H260" className="chart-grid"/><path d={linePath(active.values, 260, 52)} fill="none" stroke={active.color} strokeWidth="2.5"/><line x1={playhead * 260} x2={playhead * 260} y1="0" y2="56" className="time-line"/></svg></div>
-          <div className="panel cognitive-panel"><div className="panel-head"><span>CORTICAL PROXY BREAKDOWN</span></div>{families.map((f) => { const peak = Math.max(0, ...(analysis.cognitiveSeries?.[f.key] ?? [0])); return <div className="cue-row" key={f.key}><span>{f.name}</span><div><i style={{ width: `${peak}%`, background: f.color }}/></div><b>{Math.round(peak)}</b></div>; })}<div className="breakdown-log" role="note" aria-label="Model interpretation notes"><div className="log-stamps"><span><b>MODEL</b> TRIBE v2</span><span><b>READOUT</b> CORTICAL SURFACE</span><span className="caution-stamp"><b>LIMIT</b> PROXIES ONLY</span></div><p className="log-note">Display-only cortical summaries · no emotion, intent, memory, or subcortical-state measurement.</p></div></div>
+          <div className="panel cognitive-panel"><div className="panel-head"><span>ENGAGEMENT BY NETWORK</span></div>{families.map((f) => { const s = analysis.cognitiveSeries?.[f.key] ?? [0]; const val = s.reduce((a, b) => a + b, 0) / Math.max(1, s.length); return <div className="cue-row" key={f.key}><span>{f.name} {f.reliability === "high" ? "🟢" : "🟡"}</span><div><i style={{ width: `${val}%`, background: f.color }}/></div><b>{Math.round(val)}</b></div>; })}<div className="breakdown-log" role="note" aria-label="Model interpretation notes"><div className="log-stamps"><span><b>MODEL</b> TRIBE v2</span><span><b>READOUT</b> CORTICAL SURFACE</span><span className="caution-stamp"><b>LIMIT</b> PROXIES ONLY</span></div><p className="log-note">Predicted cortical activity-strength per engagement network · 🟢 = TRIBE predicts this region near its noise ceiling, 🟡 = well-predicted association cortex. Reliability is shown for honesty and does not weight the score (all four equal). Not an emotion, intent, memory, or subcortical-state measurement.</p></div></div>
         </div>
         <div className="panel chat-panel"><div className="panel-head"><span>ASK CEREBRA</span><span>COMING SOON</span></div><div className="chat-blank"/><div className="chat-composer"><input aria-label="Ask Cerebra" placeholder="Ask about this response…"/><button type="button">Prompt</button></div></div>
       </aside>
@@ -300,7 +322,7 @@ export default function Home() {
     {showInfo && <div className="info-backdrop" onClick={() => setShowInfo(false)}>
       <div className="info-modal" onClick={(e) => e.stopPropagation()}>
         <div className="info-head"><h2>How Cerebra reads an ad</h2><button className="icon-button" onClick={() => setShowInfo(false)} aria-label="Close"><Icon name="close" size={18}/></button></div>
-        <p>Cerebra runs your video through Meta&apos;s <b>TRIBE v2</b> model, which predicts a population-average cortical response to the clip. We summarise that response over four manually defined cortical surface proxies, shown live as the video plays. These proxies do not measure emotional state, intent, memory, or subcortical activity.</p>
+        <p>Cerebra runs your video through Meta&apos;s <b>TRIBE v2</b> model, which predicts a population-average cortical (fMRI-style) response to the clip. We summarise that response over four engagement networks defined with the model&apos;s built-in Glasser/HCP-MMP atlas — auditory/speech, language, attention &amp; salience, and visual/motion — each shown as a predicted <b>activity-strength</b> trace relative to that region&apos;s own baseline, live as the video plays. The 🟢/🟡 badges show how reliably TRIBE predicts each network; they do not affect the score (all four count equally). This is not a measure of emotion, intent, memory, purchase intent, or subcortical activity.</p>
         <ul className="info-systems">{families.map((f) => <li key={f.key}><span className="info-dot" style={{ background: f.color }}/><div><b>{f.name}</b><span>{f.blurb}</span></div></li>)}</ul>
         <p className="info-foot">TRIBE v2 provides modeled population-average cortical predictions. This interface adds display-only cortical proxy summaries; it is not a measurement of any individual viewer, a cognitive-state detector, or a medical/diagnostic tool.</p>
       </div>
