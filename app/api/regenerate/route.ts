@@ -7,6 +7,8 @@ import { REGEN_META_PROMPT } from "@/app/lib/regenPrompt";
 export const runtime = "nodejs";
 export const maxDuration = 120;
 
+const rlog = (msg: string) => console.log(`[regen-api ${new Date().toISOString()}] ${msg}`);
+
 /** GET /api/regenerate?job=<id> — poll a job's status. */
 export async function GET(request: Request) {
   const id = new URL(request.url).searchParams.get("job");
@@ -40,6 +42,7 @@ export async function POST(request: Request) {
     const source = path.join(dir, "source.mp4");
     await writeFile(source, Buffer.from(await video.arrayBuffer()));
     const meta = await probe(source);
+    rlog(`source stored ${id} · ${video.size}B · duration=${meta.duration}s`);
     return NextResponse.json({ sourceId: id, duration: meta.duration });
   }
 
@@ -55,12 +58,14 @@ export async function POST(request: Request) {
     const meta = await probe(source);
     await extractFrame(source, Math.max(0, startSec), path.join(dir, `${id}_start.png`));
     await extractFrame(source, Math.min(meta.duration - 0.05, endSec), path.join(dir, `${id}_end.png`));
+    rlog(`frames ${id} extracted from ${sourceId} · start=${startSec.toFixed(2)}s end=${endSec.toFixed(2)}s`);
     return NextResponse.json({ frameId: id, startFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=start`, endFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=end` });
   }
 
   const frameId = form.get("frameId") as string;
   if (!frameId) return NextResponse.json({ error: "Missing prepared frames" }, { status: 400 });
   const provider: RegenJob["provider"] = form.get("provider") === "kling" ? "kling" : "seedance";
+  const agent: RegenJob["agent"] = form.get("agent") === "claude" ? "claude" : "codex";
 
   const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const dir = jobDir(id);
@@ -81,10 +86,12 @@ export async function POST(request: Request) {
       sourceId,
       frameId,
       provider,
+      agent,
       label,
       createdAt: new Date().toISOString(),
     };
     await writeJob(job);
+    rlog(`job QUEUED ${id} · provider=${provider} agent=${agent} dur=${job.durationSec}s slot=${label ?? "?"} (worker will pick up within poll interval)`);
 
     return NextResponse.json({
       jobId: id,

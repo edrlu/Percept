@@ -22,10 +22,39 @@ export type RegenJob = {
   sourceId: string;
   frameId: string;
   provider?: "seedance" | "kling"; // generation model chosen in the UI
+  agent?: "claude" | "codex"; // which MCP agent the worker spawns to drive Pika
   label?: string;
   error?: string;
   createdAt: string;
 };
+
+// Regeneration settings chosen in the UI. Persisted to disk so they survive a
+// server restart and are shared by every client + the worker.
+export type RegenSettings = { provider: "seedance" | "kling"; agent: "claude" | "codex" };
+export const DEFAULT_SETTINGS: RegenSettings = { provider: "seedance", agent: "codex" };
+const SETTINGS_FILE = path.join(process.cwd(), ".cerebra-settings.json");
+
+export async function readSettings(): Promise<RegenSettings> {
+  try {
+    const raw = JSON.parse(await readFile(SETTINGS_FILE, "utf8"));
+    return {
+      provider: raw.provider === "kling" ? "kling" : "seedance",
+      agent: raw.agent === "claude" ? "claude" : "codex",
+    };
+  } catch {
+    return { ...DEFAULT_SETTINGS };
+  }
+}
+
+export async function writeSettings(next: Partial<RegenSettings>): Promise<RegenSettings> {
+  const current = await readSettings();
+  const merged: RegenSettings = {
+    provider: next.provider === "kling" || next.provider === "seedance" ? next.provider : current.provider,
+    agent: next.agent === "claude" || next.agent === "codex" ? next.agent : current.agent,
+  };
+  await writeFile(SETTINGS_FILE, JSON.stringify(merged, null, 2));
+  return merged;
+}
 
 export function jobDir(id: string) {
   // Guard against path traversal from a user-supplied id.

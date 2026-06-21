@@ -28,16 +28,21 @@ export async function POST(request: Request) {
   const clipPath = path.join(dir, "clip.mp4");
   const source = path.join(sourceDir(job.sourceId), "source.mp4");
   const final = path.join(dir, "final.mp4");
-  await writeFile(clipPath, Buffer.from(await clip.arrayBuffer()));
+  const bytes = Buffer.from(await clip.arrayBuffer());
+  await writeFile(clipPath, bytes);
+  console.log(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · received clip ${bytes.length}B · merging [${job.startSec.toFixed(2)}s, ${job.endSec.toFixed(2)}s]`);
 
   await writeJob({ ...job, status: "merging" });
   try {
+    const t = Date.now();
     await mergeReplace(source, clipPath, job.startSec, job.endSec, final);
     await writeJob({ ...job, status: "done" });
+    console.log(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · merge OK in ${((Date.now() - t) / 1000).toFixed(1)}s → done`);
     return NextResponse.json({ ok: true, downloadUrl: `/api/regenerate/file?job=${jobId}&name=final.mp4` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Merge failed";
     await writeJob({ ...job, status: "error", error: message });
+    console.error(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · MERGE FAILED: ${message}`);
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }

@@ -50,6 +50,7 @@ yarn-error.log*
 /.venv/
 /.tribev2-worker*.log
 /.regen-worker*.log
+/.cerebra-settings.json
 /worker/.cache/
 
 # Local AI-assistant tooling and Python bytecode
