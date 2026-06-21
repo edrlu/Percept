@@ -34,9 +34,27 @@ type OptimizeResponse = {
   creative: Creative; video_model_payload: string; brief: string;
   cached: boolean; llm_backed: boolean; retrieved: Retrieved[]; research: Finding[];
   rag: RAGTrace;
+  session_id?: string | null; session_turns?: number;
 };
+
+// Stable per-browser conversation id so iterative briefs share Redis working
+// memory (the pipeline keys session history on this).
+function getSessionId(): string {
+  if (typeof window === "undefined") return "studio-server";
+  const KEY = "cerebra-session-id";
+  let id = window.localStorage.getItem(KEY);
+  if (!id) {
+    const rand = window.crypto?.randomUUID?.() ?? Math.random().toString(36).slice(2);
+    id = `studio-${rand.slice(0, 12)}`;
+    window.localStorage.setItem(KEY, id);
+  }
+  return id;
+}
 type Health = {
   ready: boolean; llm_backed?: boolean; model?: string | null;
+  pipeline?: {
+    connected: boolean; endpoint: string | null; whisper: boolean; pika_connected: boolean;
+  };
   redis?: {
     connected: boolean; endpoint: string; cloud: boolean; search_available: boolean;
     knowledge_index: string; index_ready: boolean; document_count: number;
@@ -51,11 +69,26 @@ const ASPECTS = ["9:16", "3:4", "1:1", "16:9"];
 // generate the model-ready Seedance payload.
 type StepIcon = "db" | "search" | "layers" | "spark";
 const RAG_STEPS: { key: string; n: string; label: string; sub: string; icon: StepIcon }[] = [
-  { key: "embed", n: "01", label: "RAG corpus", sub: "Score brief → query corpus", icon: "db" },
-  { key: "retrieve", n: "02", label: "Retrieve", sub: "Weighted local retrieval", icon: "search" },
+  { key: "embed", n: "01", label: "Redis context", sub: "Vector index · semantic cache", icon: "db" },
+  { key: "retrieve", n: "02", label: "Retrieve", sub: "Rank proven ad patterns", icon: "search" },
   { key: "append", n: "03", label: "Append", sub: "Assemble SYSTEM + context", icon: "layers" },
   { key: "generate", n: "04", label: "Generate", sub: "Seedance payload · RAG-grounded", icon: "spark" },
 ];
+
+function apiErrorMessage(data: unknown, fallback: string): string {
+  if (typeof data === "string" && data.trim()) return data;
+  if (!data || typeof data !== "object") return fallback;
+
+  const body = data as Record<string, unknown>;
+  for (const value of [body.error, body.detail, body.message]) {
+    if (typeof value === "string" && value.trim()) return value;
+    if (value && typeof value === "object") {
+      const nested = value as Record<string, unknown>;
+      if (typeof nested.message === "string" && nested.message.trim()) return nested.message;
+    }
+  }
+  return fallback;
+}
 
 function Icon({ name, size = 16 }: { name: "mic" | "spark" | "copy" | "film" | "send" | "db" | "search" | "layers" | "check" | "redis"; size?: number }) {
   const p: Record<string, ReactNode> = {
@@ -143,8 +176,9 @@ export function Studio() {
     const rag = result?.rag;
     const red = health?.redis;
     if (i === 0) {
+      if (red?.connected) return `${red.knowledge_index} · ${red.document_count} docs`;
       if (rag) return `${rag.vector_dimensions}-d · ${rag.embedding_model.split("/").pop()}`;
-      return red ? red.endpoint : "local corpus";
+      return "Redis connecting…";
     }
     if (i === 1) {
       if (rag) return `top ${rag.retrieved_count} of ${rag.index_document_count} · ${rag.distance_metric}`;
@@ -202,7 +236,7 @@ export function Studio() {
       fd.append("audio", blob, `clip.${ext}`);
       const res = await fetch("/api/transcribe", { method: "POST", body: fd });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || data?.detail || `Transcription failed (${res.status})`);
+      if (!res.ok) throw new Error(apiErrorMessage(data, `Transcription failed (${res.status})`));
       const text = (data.text || "").trim();
       if (text) setBrief((b) => (b ? b + " " : "") + text);
       else setError("Didn't catch any speech — try again, a bit closer to the mic.");
@@ -227,10 +261,11 @@ export function Studio() {
           industry: industry || undefined,
           aspect_ratio: aspect,
           live_research: liveResearch,
+          session_id: getSessionId(),
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || data?.detail || `Request failed (${res.status})`);
+      if (!res.ok) throw new Error(apiErrorMessage(data, `Request failed (${res.status})`));
       setResult(data as OptimizeResponse);
       finishRag();
     } catch (e) {
@@ -262,7 +297,7 @@ export function Studio() {
         }),
       });
       const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || data?.detail || `Generate failed (${res.status})`);
+      if (!res.ok) throw new Error(apiErrorMessage(data, `Generate failed (${res.status})`));
       if (data.status === "completed" && data.video_url) setVideoUrl(data.video_url);
       else setGenStatus(data.message || "Generation unavailable.");
     } catch (e) {
@@ -288,11 +323,11 @@ export function Studio() {
         </div>
 
         <header className="studio-hero">
-          <span className="studio-eyebrow"><i /> RESEARCH-BACKED · LOCAL RAG · REALISTIC SHORT-FORM</span>
+          <span className="studio-eyebrow"><i /> RESEARCH-BACKED · REDIS RAG · REALISTIC SHORT-FORM</span>
           <h1>Brief to broadcast, <em>engineered.</em></h1>
           <p>
-            Speak or type a brief. Cerebra retrieves proven ad patterns from its local corpus and
-            engineers the exact payload your video model needs — system prompt,
+            Speak or type a brief. Cerebra uses Redis-backed context and proven ad patterns to
+            engineer the exact payload your video model needs — system prompt,
             evidence, and the Seedance 2.0 generation skill, assembled.
           </p>
         </header>
@@ -301,15 +336,15 @@ export function Studio() {
         <section className={`rag${ragActive ? " running" : ""}${ragDone ? " done" : ""}${ragErr ? " errored" : ""}`}>
           <div className="rag-head">
             <div className="rag-title">
-              <span className="rag-redis"><Icon name="redis" size={14} /> LOCAL</span>
-              <b>RAG PIPELINE</b>
-              <small>vector retrieval → context assembly → generation</small>
+              <span className="rag-redis"><Icon name="redis" size={14} /> REDIS</span>
+              <b>REDIS RAG PIPELINE</b>
+              <small>vector search → context assembly → generation</small>
             </div>
             <div className={`rag-conn-badge ${redis?.connected ? "ok" : "off"}`}>
               <span className="dot" />
-              {redis
-                ? <>RAG CORPUS LIVE · {redis.endpoint} · {redis.knowledge_index} · {redis.document_count} docs</>
-                : "connecting to optimizer corpus…"}
+              {redis?.connected
+                ? <>REDIS CONNECTED · {redis.endpoint} · {redis.knowledge_index} · {redis.document_count} docs</>
+                : "connecting to Redis…"}
             </div>
           </div>
           <div className="rag-track">
@@ -449,7 +484,7 @@ export function Studio() {
             {result && (result.retrieved.length > 0 || result.research.length > 0) && (
               <div className="panel studio-card">
                 <div className="panel-head">
-                  <span>EVIDENCE — LOCAL RAG RETRIEVAL{result.research.length ? " + LIVE RESEARCH" : ""}</span>
+                  <span>EVIDENCE — {result.rag.backend === "redis" ? "REDIS VECTOR RETRIEVAL" : "LOCAL KEYWORD FALLBACK"}{result.research.length ? " + LIVE RESEARCH" : ""}</span>
                   <span className={result.rag.verified ? "ready-tag" : "warn"}>
                     {result.rag.verified ? "● VERIFIED" : "● UNVERIFIED"}
                   </span>
@@ -465,6 +500,12 @@ export function Studio() {
                       <span className="chip">{result.rag.embedding_model.split("/").pop()}</span>
                     </div></div>
                   <div className="kv"><span>EMBEDDED RETRIEVAL QUERY</span><p>{result.rag.query}</p></div>
+                  <div className="kv"><span>REDIS AI PILLARS</span>
+                    <div className="chips">
+                      <span className="chip">vector search</span>
+                      <span className={`chip${result.cached ? " research" : ""}`}>semantic cache · {result.cached ? "HIT" : "miss"}</span>
+                      <span className="chip">session memory · {result.session_turns ?? 0} turns</span>
+                    </div></div>
                 </div>
                 <div className="ev">
                   {result.retrieved.map((d) => (

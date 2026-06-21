@@ -93,6 +93,14 @@ class Settings:
     memory_key: str = os.getenv("CEREBRA_MEMORY_KEY", "cerebra:runs")
     memory_max: int = int(os.getenv("CEREBRA_MEMORY_MAX", "500"))
 
+    # Per-session conversation history (the workshop's "session memory" pillar).
+    # Each brief→creative exchange is a turn in a per-session Redis list with a
+    # TTL, so iterative re-optimization remembers earlier briefs and feedback.
+    session_prefix: str = os.getenv("CEREBRA_SESSION_PREFIX", "cerebra:session:")
+    session_ttl: int = int(os.getenv("CEREBRA_SESSION_TTL", "86400"))  # 24h
+    session_max: int = int(os.getenv("CEREBRA_SESSION_MAX", "40"))  # turns kept
+    session_context_turns: int = int(os.getenv("CEREBRA_SESSION_CONTEXT_TURNS", "8"))
+
     # --- Embeddings (local, free, no key) ---
     embedding_model: str = os.getenv(
         "CEREBRA_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2"

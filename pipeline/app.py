@@ -25,7 +25,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from . import llm, optimizer, pika, pika_auth, research
 from .config import settings
 from .duration import DurationRequestError
-from .redis_store import AdKnowledgeStore, AgentMemory, redis_runtime_status
+from .redis_store import AdKnowledgeStore, AgentMemory, SessionMemory, redis_runtime_status
 from .schema import GenerateRequest, OptimizeRequest, OptimizeResponse
 
 app = FastAPI(title="Cerebra Stage 1 — RAG prompt optimizer")
@@ -135,10 +135,12 @@ async def transcribe_audio(audio: UploadFile = File(...)) -> dict:
         tmp.write(await audio.read())
         tmp.flush()
         try:
-            text = _t.transcribe(tmp.name)
+            text, engine = _t.transcribe_with_engine(tmp.name)
         except _t.TranscriptionUnavailable as exc:
             raise HTTPException(status_code=503, detail=str(exc)) from exc
-    return {"text": text}
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"Transcription failed: {exc}") from exc
+    return {"text": text, "engine": engine}
 
 
 @app.post("/research/refresh")
@@ -156,3 +158,14 @@ def research_refresh(req: OptimizeRequest) -> dict:
 @app.get("/memory")
 def memory(n: int = 20) -> dict:
     return {"runs": AgentMemory().recent(n)}
+
+
+@app.get("/session/{session_id}")
+def session_history(session_id: str, n: int = 20) -> dict:
+    """Per-session conversation history (working memory) from Redis."""
+    mem = SessionMemory()
+    return {
+        "session_id": session_id,
+        "turns": mem.history(session_id, n=n),
+        "turn_count": mem.turn_count(session_id),
+    }

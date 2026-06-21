@@ -47,6 +47,11 @@ class OptimizeRequest(BaseModel):
     )
     live_research: bool = Field(False, description="Run live web research on successful ads in this space.")
     use_cache: bool | None = Field(None, description="Override the semantic cache for this request.")
+    session_id: str | None = Field(
+        None,
+        description="Conversation/session id. When set, prior briefs in the same "
+        "session are loaded from Redis as working memory and this turn is recorded.",
+    )
 
 
 class GenerateRequest(BaseModel):
@@ -81,6 +86,14 @@ class OptimizedCreative(BaseModel):
         default_factory=list, description="Which retrieved/research principles were used."
     )
     rationale: str = Field("", description="Why this will perform, tied to the evidence.")
+
+
+class SessionTurn(BaseModel):
+    """One message in a session's working memory (conversation history)."""
+
+    role: Literal["user", "assistant"]
+    content: str
+    ts: float = 0.0
 
 
 class ResearchFinding(BaseModel):
@@ -120,8 +133,12 @@ class OptimizeResponse(BaseModel):
     #   Seedance SYSTEM prompt + context (research + retrieval) + generation skill.
     video_model_payload: str
     brief: str
-    cached: bool = False
+    cached: bool = Field(False, description="True when the semantic cache served this result (no LLM call).")
     llm_backed: bool = Field(True, description="False if the deterministic template fallback ran.")
     retrieved: list[RetrievedDoc] = Field(default_factory=list)
     research: list[ResearchFinding] = Field(default_factory=list)
     rag: RAGTrace
+    session_id: str | None = Field(None, description="Session this turn belongs to, if any.")
+    session_turns: int = Field(
+        0, description="Total messages in this session's Redis working memory after this turn."
+    )

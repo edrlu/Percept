@@ -17,7 +17,7 @@ from . import llm, research
 from .config import settings
 from .duration import resolve_duration
 from .knowledge.seedance_skill import assemble_payload
-from .redis_store import AdKnowledgeStore, AgentMemory, PromptCache
+from .redis_store import AdKnowledgeStore, AgentMemory, PromptCache, SessionMemory
 from .schema import (
     OptimizedCreative,
     OptimizeRequest,
@@ -137,6 +137,23 @@ def _rag_trace(
     )
 
 
+def _conversation_block(history: list[dict]) -> str:
+    """Render prior session turns as working memory for the optimizer."""
+    if not history:
+        return ""
+    lines = [
+        "CONVERSATION SO FAR (this session — maintain continuity with the user's "
+        "earlier briefs, refinements, and feedback; treat the newest brief below as "
+        "the active request):"
+    ]
+    for turn in history:
+        role = str(turn.get("role", "user")).upper()
+        content = str(turn.get("content") or "").strip()
+        if content:
+            lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
 def _context_block(retrieved: list[RetrievedDoc], findings: list[ResearchFinding]) -> str:
     lines: list[str] = [
         "DURATION PRECEDENCE: any 15-second timings in retrieved examples are "
@@ -161,10 +178,13 @@ def _optimize_with_llm(
     findings: list[ResearchFinding],
     aspect_ratio: str,
     duration: int,
+    conversation: str = "",
 ) -> OptimizedCreative:
     context = _context_block(retrieved, findings)
     pacing = _beat_guidance(duration)
+    history_block = f"{conversation}\n\n" if conversation else ""
     user = (
+        f"{history_block}"
         f"USER BRIEF:\n{req.brief}\n\n"
         f"PRODUCT: {req.product or 'unspecified'}\n"
         f"INDUSTRY: {req.industry or 'unspecified'}\n"
@@ -324,6 +344,30 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
     cache = PromptCache()
     cache.ensure()
     memory = AgentMemory()
+    session = SessionMemory()
+
+    session_id = (req.session_id or "").strip() or None
+    history = (
+        session.history(session_id, n=settings.session_context_turns)
+        if session_id
+        else []
+    )
+
+    def _record_turn(resp: OptimizeResponse) -> OptimizeResponse:
+        """Append this exchange to the session's Redis working memory."""
+        if not session_id:
+            return resp
+        session.append(session_id, "user", req.brief.strip())
+        summary = resp.creative.hook or resp.creative.optimized_prompt[:200]
+        session.append(
+            session_id,
+            "assistant",
+            summary,
+            meta={"cached": resp.cached, "duration": resp.creative.duration_seconds},
+        )
+        resp.session_id = session_id
+        resp.session_turns = session.turn_count(session_id)
+        return resp
 
     aspect_ratio, duration = _normalize_generation_settings(
         req.brief, req.aspect_ratio, req.duration_seconds
@@ -339,7 +383,7 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
                 and resp.creative.model == settings.video_model
             ):
                 resp.cached = True
-                return resp
+                return _record_turn(resp)
 
     # RAG retrieval over the Redis-backed research corpus (+ prior research).
     retrieval_query = _retrieval_query(req)
@@ -372,9 +416,12 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
     if not rag.verified:
         raise RuntimeError("Redis RAG provenance verification failed.")
 
+    conversation = _conversation_block(history)
     llm_backed = llm.available()
     if llm_backed:
-        creative = _optimize_with_llm(req, retrieved, findings, aspect_ratio, duration)
+        creative = _optimize_with_llm(
+            req, retrieved, findings, aspect_ratio, duration, conversation
+        )
     else:
         creative = _optimize_template(req, retrieved, findings, aspect_ratio, duration)
 
@@ -413,6 +460,7 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
             "hook": creative.hook,
             "generation_profile": settings.generation_profile,
             "llm_backed": llm_backed,
+            "session_id": session_id,
         }
     )
-    return response
+    return _record_turn(response)

@@ -336,3 +336,47 @@ class AgentMemory:
     def recent(self, n: int = 20) -> list[dict[str, Any]]:
         raw = self.client.lrange(settings.memory_key, 0, n - 1)
         return [json.loads(item) for item in raw]
+
+
+# ---------------------------------------------------------------------------
+# 4. Per-session conversation history (working memory)
+# ---------------------------------------------------------------------------
+
+
+class SessionMemory:
+    """Per-session conversation history — the workshop's "session memory" pillar.
+
+    Each brief→creative exchange is appended as a turn to a per-session Redis
+    list (oldest→newest) with a TTL, so iterative re-optimization in the same
+    session remembers earlier briefs and feedback. Unlike AgentMemory (one
+    global cross-session log), this is scoped to a single conversation.
+    """
+
+    def __init__(self, client: redis.Redis | None = None) -> None:
+        self.client = client or get_redis()
+
+    def _key(self, session_id: str) -> str:
+        return f"{settings.session_prefix}{session_id}"
+
+    def append(
+        self, session_id: str, role: str, content: str, meta: dict[str, Any] | None = None
+    ) -> None:
+        """Append one turn, cap the list, and refresh the TTL — atomically."""
+        key = self._key(session_id)
+        record: dict[str, Any] = {"role": role, "content": content, "ts": time.time()}
+        if meta:
+            record["meta"] = meta
+        pipe = self.client.pipeline()
+        pipe.rpush(key, json.dumps(record).encode("utf-8"))
+        pipe.ltrim(key, -settings.session_max, -1)
+        pipe.expire(key, settings.session_ttl)
+        pipe.execute()
+
+    def history(self, session_id: str, n: int | None = None) -> list[dict[str, Any]]:
+        """Return turns oldest→newest; the last ``n`` if given."""
+        start = 0 if n is None else -n
+        raw = self.client.lrange(self._key(session_id), start, -1)
+        return [json.loads(item) for item in raw]
+
+    def turn_count(self, session_id: str) -> int:
+        return int(self.client.llen(self._key(session_id)))
