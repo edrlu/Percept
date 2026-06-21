@@ -487,9 +487,9 @@ Replace lines 36-72 (the `archivedMp3` block through the success `return`) with 
   }
 ```
 
-- [ ] **Step 3: Remove `scoreArchivedTakeMp3` from `regen.ts` and update the `score` doc**
+- [ ] **Step 3: Remove the now-dead scorer + mp3 helper from `regen.ts` and update the `score` doc**
 
-In `app/lib/regen.ts`, delete the entire `scoreArchivedTakeMp3` block (lines 249-256, the doc comment + function). The `extractAudioMp3` helper above it stays (it's still exported even if currently unused; leaving it avoids churn — do NOT delete it).
+In `app/lib/regen.ts`, delete the `extractAudioMp3` block (lines 232-247) **and** the `scoreArchivedTakeMp3` block (lines 249-256) — their doc comments and function bodies. Both are now unused: `/complete` (Task 4 Step 2) no longer archives an mp3 or calls the filler scorer, and a repo-wide grep confirms `extractAudioMp3` had no other caller. Removing them avoids leaving dead exports.
 
 Then update the `RegenJob.score` comment (lines 38-40) from:
 
@@ -659,10 +659,10 @@ Replace the auto-open effect (lines 712-721) with:
       autoOpenedRef.current.add(key);
       void scoreBatch(key);
     }
-  }, [regenJobs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [regenJobs]);
 ```
 
-(`scoreBatch` reads `regenJobs`/`analysis` from the current render closure; the effect already re-runs on `regenJobs` changes. The disable comment matches the existing poll effect's intentional dep handling.)
+(`scoreBatch` reads `regenJobs`/`analysis` from the current render closure; the effect already re-runs on `regenJobs` changes. Keep the dep array as `[regenJobs]` exactly like the auto-open effect this replaces — no `eslint-disable` comment; the existing effects in this file use the same single-dep form and lint passes.)
 
 - [ ] **Step 4: Typecheck + build**
 
