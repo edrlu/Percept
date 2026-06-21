@@ -108,8 +108,13 @@ function createDemoForFile(file: File, scheme: ColorSchemeId): Analysis {
 }
 
 function engagementScore(a: Analysis): number {
-  const peaks = FAMILY_KEYS.map((k) => Math.max(0, ...(a.cognitiveSeries?.[k] ?? [0])));
-  return Math.round(peaks.reduce((s, v) => s + v, 0) / peaks.length);
+  // Mean of each system's average over the clip (mean of averages), so the hero
+  // number tracks sustained engagement rather than each system's single best moment.
+  const averages = FAMILY_KEYS.map((k) => {
+    const series = a.cognitiveSeries?.[k] ?? [0];
+    return series.length ? series.reduce((s, v) => s + v, 0) / series.length : 0;
+  });
+  return Math.round(averages.reduce((s, v) => s + v, 0) / averages.length);
 }
 
 function Icon({ name, size = 18 }: { name: "upload" | "play" | "pause" | "chevron" | "reset" | "info" | "close" | "settings" | "check"; size?: number }) {
@@ -625,7 +630,7 @@ export default function Home() {
       <div className="topbar-right">
         <div className="model-pill"><span className="live-dot"/>{status}</div>
         {stage === "create" && <div className="topbar-score">
-        <div><span className="score-label">Engagement</span><span className="score-foot">Four-system peak</span></div>
+        <div><span className="score-label">Engagement</span><span className="score-foot">Four-system average</span></div>
         <strong>{score}<small>/100</small></strong>
         </div>}
         <div className="appearance-control">
@@ -663,7 +668,7 @@ export default function Home() {
             <line x1={playhead * 240} x2={playhead * 240} y1="0" y2="50" className="time-line"/>
             <defs><linearGradient id="netAreaFill" x1="0" x2="0" y1="0" y2="1"><stop stopColor="var(--chart-fill)" stopOpacity=".22"/><stop offset="1" stopColor="var(--chart-fill)" stopOpacity="0"/></linearGradient></defs>
           </svg>
-          <span className="hero-foot">Mean of the four systems&apos; peaks</span>
+          <span className="hero-foot">Mean of the four systems&apos; averages</span>
         </div>
 
         {/* The single live annotation — low contrast, bottom-left */}
