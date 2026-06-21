@@ -114,8 +114,10 @@ uvicorn pipeline.app:app --port 8100
 
 ### From the Next.js app
 
-Set `CEREBRA_OPTIMIZER_URL=http://localhost:8100` in `.env.local`; the
-`/api/optimize` route proxies to this service (mirrors `/api/predict`).
+The Studio tab now runs its prompt-optimization path in-process through
+`/api/optimize`, using the bundled ad-knowledge corpus. Running this FastAPI
+service is optional for pipeline experiments and is no longer required for the
+Studio button to work.
 
 ## Degradation
 

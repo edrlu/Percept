@@ -1,38 +1,22 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-export const maxDuration = 600;
 
 /**
- * Stage 2 gateway. Sends the optimized prompt to the Python service, which
- * renders it via Pika's Seedance 2.0 provider—or returns the cached render—and
- * replies with the video URL the Studio phone auto-plays.
+ * Stage 2 placeholder. Stage 1 optimization is now built into Next; rendering
+ * still needs a Pika integration in this process, so fail clearly instead of
+ * proxying to a removed optimizer service.
  */
-export async function POST(request: Request) {
-  const optimizerUrl = process.env.CEREBRA_OPTIMIZER_URL;
-  if (!optimizerUrl) {
-    return NextResponse.json(
-      { error: "No optimizer configured. Set CEREBRA_OPTIMIZER_URL." },
-      { status: 503 },
-    );
-  }
-  try {
-    const body = await request.text();
-    const upstream = await fetch(`${optimizerUrl.replace(/\/$/, "")}/generate`, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body,
-      signal: AbortSignal.timeout(590_000),
-    });
-    return new NextResponse(await upstream.arrayBuffer(), {
-      status: upstream.status,
-      headers: {
-        "content-type": upstream.headers.get("content-type") ?? "application/json",
-        "cache-control": "no-store",
-      },
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Generate proxy failed";
-    return NextResponse.json({ error: message }, { status: 502 });
-  }
+export async function POST() {
+  return NextResponse.json(
+    {
+      status: "unavailable",
+      message:
+        "Prompt optimization is ready. Video generation is not wired into the Next.js process yet; copy the payload and run it through Pika/Seedance.",
+    },
+    {
+      status: 501,
+      headers: { "cache-control": "no-store" },
+    },
+  );
 }

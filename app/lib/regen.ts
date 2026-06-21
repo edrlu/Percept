@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -12,9 +12,11 @@ import path from "node:path";
 export const REGEN_ROOT = path.join(process.cwd(), "regen");
 export const SOURCE_ROOT = path.join(REGEN_ROOT, "sources");
 
+export type RegenStatus = "awaiting_generation" | "generating" | "merging" | "done" | "error";
+
 export type RegenJob = {
   id: string;
-  status: "awaiting_generation" | "merging" | "done" | "error";
+  status: RegenStatus;
   startSec: number;
   endSec: number;
   durationSec: number; // slot length, snapped to 5 or 10
@@ -24,8 +26,10 @@ export type RegenJob = {
   provider?: "seedance" | "kling"; // generation model chosen in the UI
   agent?: "claude" | "codex"; // which MCP agent the worker spawns to drive Pika
   label?: string;
+  stage?: string;
   error?: string;
   createdAt: string;
+  updatedAt?: string;
 };
 
 // Regeneration settings chosen in the UI. Persisted to disk so they survive a
@@ -77,26 +81,63 @@ export async function readJob(id: string): Promise<RegenJob | null> {
 
 export async function writeJob(job: RegenJob): Promise<void> {
   await mkdir(jobDir(job.id), { recursive: true });
-  await writeFile(path.join(jobDir(job.id), "job.json"), JSON.stringify(job, null, 2));
+  await writeFile(path.join(jobDir(job.id), "job.json"), JSON.stringify({ ...job, updatedAt: new Date().toISOString() }, null, 2));
 }
 
-function run(cmd: string, args: string[]): Promise<string> {
+function shortCmd(cmd: string, args: string[]) {
+  return [cmd, ...args].map((arg) => /\s/.test(arg) ? JSON.stringify(arg) : arg).join(" ");
+}
+
+export async function appendJobLog(id: string, message: string): Promise<void> {
+  await mkdir(jobDir(id), { recursive: true });
+  await appendFile(path.join(jobDir(id), "job.log"), `[${new Date().toISOString()}] ${message}\n`);
+}
+
+export async function readJobLogTail(id: string, bytes = 24000): Promise<string> {
+  const parts: string[] = [];
+  for (const name of ["job.log", "agent.log"]) {
+    try {
+      const raw = await readFile(path.join(jobDir(id), name), "utf8");
+      parts.push(`--- ${name} ---\n${raw.slice(-bytes)}`);
+    } catch {
+      // Missing logs are normal early in the job lifecycle.
+    }
+  }
+  return parts.join("\n").slice(-(bytes * 2));
+}
+
+function run(cmd: string, args: string[], opts: { jobId?: string; label?: string } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
+    const t = Date.now();
+    if (opts.jobId) void appendJobLog(opts.jobId, `${opts.label ?? "command"} START: ${shortCmd(cmd, args)}`);
     const child = spawn(cmd, args);
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (d) => (stdout += d));
     child.stderr.on("data", (d) => (stderr += d));
-    child.on("error", reject);
-    child.on("close", (code) => (code === 0 ? resolve(stdout) : reject(new Error(`${cmd} failed (${code}): ${stderr.slice(-800)}`))));
+    child.on("error", (err) => {
+      if (opts.jobId) void appendJobLog(opts.jobId, `${opts.label ?? "command"} SPAWN ERROR: ${err.message}`);
+      reject(err);
+    });
+    child.on("close", (code) => {
+      const elapsed = ((Date.now() - t) / 1000).toFixed(2);
+      if (code === 0) {
+        if (opts.jobId) void appendJobLog(opts.jobId, `${opts.label ?? "command"} OK in ${elapsed}s${stderr.trim() ? `\nstderr:\n${stderr.slice(-4000)}` : ""}`);
+        resolve(stdout);
+      } else {
+        const detail = `${cmd} failed (${code}) after ${elapsed}s`;
+        if (opts.jobId) void appendJobLog(opts.jobId, `${opts.label ?? "command"} FAILED: ${detail}\nstderr:\n${stderr.slice(-12000)}\nstdout:\n${stdout.slice(-4000)}`);
+        reject(new Error(`${detail}: ${stderr.slice(-1200)}`));
+      }
+    });
   });
 }
 
 type Probe = { width: number; height: number; fps: string; duration: number; hasAudio: boolean };
 
-export async function probe(file: string): Promise<Probe> {
+export async function probe(file: string, opts: { jobId?: string; label?: string } = {}): Promise<Probe> {
   const out = await run("ffprobe", ["-v", "error", "-show_entries",
-    "stream=codec_type,width,height,r_frame_rate:format=duration", "-of", "json", file]);
+    "stream=codec_type,width,height,r_frame_rate:format=duration", "-of", "json", file], { ...opts, label: opts.label ?? "ffprobe" });
   const data = JSON.parse(out);
   const video = (data.streams ?? []).find((s: { codec_type: string }) => s.codec_type === "video") ?? {};
   const hasAudio = (data.streams ?? []).some((s: { codec_type: string }) => s.codec_type === "audio");
@@ -110,8 +151,8 @@ export async function probe(file: string): Promise<Probe> {
 }
 
 /** Extract a single frame at `sec` to a PNG (fast input-side seek). */
-export async function extractFrame(src: string, sec: number, out: string): Promise<void> {
-  await run("ffmpeg", ["-y", "-ss", `${sec}`, "-i", src, "-frames:v", "1", "-q:v", "2", out]);
+export async function extractFrame(src: string, sec: number, out: string, opts: { jobId?: string; label?: string } = {}): Promise<void> {
+  await run("ffmpeg", ["-y", "-ss", `${sec}`, "-i", src, "-frames:v", "1", "-q:v", "2", out], { ...opts, label: opts.label ?? `extract-frame@${sec.toFixed(3)}s` });
 }
 
 /**
@@ -121,9 +162,9 @@ export async function extractFrame(src: string, sec: number, out: string): Promi
  * clip has no audio track. Empty head/tail segments (cut at the very start/end)
  * are dropped so concat never sees a zero-length input.
  */
-export async function mergeReplace(src: string, clip: string, startSec: number, endSec: number, out: string): Promise<void> {
-  const s = await probe(src);
-  const c = await probe(clip);
+export async function mergeReplace(src: string, clip: string, startSec: number, endSec: number, out: string, opts: { jobId?: string } = {}): Promise<void> {
+  const s = await probe(src, { jobId: opts.jobId, label: "probe-source-before-merge" });
+  const c = await probe(clip, { jobId: opts.jobId, label: "probe-generated-clip" });
   const start = Math.max(0, startSec);
   const end = Math.min(s.duration || endSec, endSec);
   const hasPre = start > 0.04;
@@ -165,5 +206,8 @@ export async function mergeReplace(src: string, clip: string, startSec: number, 
   args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "20");
   if (audio) args.push("-c:a", "aac");
   args.push("-movflags", "+faststart", out);
-  await run("ffmpeg", args);
+  if (opts.jobId) {
+    await appendJobLog(opts.jobId, `merge plan: source=${s.width}x${s.height} fps=${s.fps} duration=${s.duration.toFixed(3)}s audio=${s.hasAudio}; clip=${c.width}x${c.height} duration=${c.duration.toFixed(3)}s audio=${c.hasAudio}; replace=[${start.toFixed(3)}, ${end.toFixed(3)}], segments=${n}`);
+  }
+  await run("ffmpeg", args, { jobId: opts.jobId, label: "merge-ffmpeg" });
 }

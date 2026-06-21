@@ -2,9 +2,9 @@
 
 import { Fragment, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 
-// Stage 1 of the Cerebra loop. Input a brief (voice or text) → the Python RAG
-// optimizer returns the assembled Seedance 2.0 payload (SYSTEM + research +
-// retrieval + Pika skill). Stage 2 sends the optimized creative to Pika's
+// Stage 1 of the Cerebra loop. Input a brief (voice or text) → the built-in RAG
+// optimizer returns the assembled Seedance 2.0 payload (SYSTEM + retrieval +
+// Pika skill). Stage 2 sends the optimized creative to Pika's
 // Seedance provider, then plays the returned render directly in the phone panel.
 //
 // This renders inside the workspace as the "Studio" tab, styled to match the
@@ -46,15 +46,15 @@ type Health = {
 const INDUSTRIES = ["", "beverage", "tech", "beauty", "food", "saas", "fitness", "general"];
 const ASPECTS = ["9:16", "3:4", "1:1", "16:9"];
 
-// The four RAG stages the pipeline visualizes, in execution order. These mirror
-// exactly what the Python service does server-side: embed the brief → query
-// Redis Vector Search → assemble the retrieved context → generate with the LLM.
+// The four RAG stages the pipeline visualizes, in execution order: score the
+// brief against the local corpus → retrieve matches → assemble context →
+// generate the model-ready Seedance payload.
 type StepIcon = "db" | "search" | "layers" | "spark";
 const RAG_STEPS: { key: string; n: string; label: string; sub: string; icon: StepIcon }[] = [
-  { key: "embed", n: "01", label: "Redis Vector DB", sub: "Embed brief → query vector", icon: "db" },
-  { key: "retrieve", n: "02", label: "Retrieve", sub: "KNN cosine vector search", icon: "search" },
+  { key: "embed", n: "01", label: "RAG corpus", sub: "Score brief → query corpus", icon: "db" },
+  { key: "retrieve", n: "02", label: "Retrieve", sub: "Weighted local retrieval", icon: "search" },
   { key: "append", n: "03", label: "Append", sub: "Assemble SYSTEM + context", icon: "layers" },
-  { key: "generate", n: "04", label: "Generate", sub: "Claude Opus 4.8 · RAG-grounded", icon: "spark" },
+  { key: "generate", n: "04", label: "Generate", sub: "Seedance payload · RAG-grounded", icon: "spark" },
 ];
 
 function Icon({ name, size = 16 }: { name: "mic" | "spark" | "copy" | "film" | "send" | "db" | "search" | "layers" | "check" | "redis"; size?: number }) {
@@ -101,8 +101,8 @@ export function Studio() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
-  // Pull live Redis vector-store status so the pipeline shows real numbers
-  // (endpoint, index, vector count) even before the first run.
+  // Pull optimizer status so the pipeline shows real corpus numbers even before
+  // the first run.
   useEffect(() => {
     let alive = true;
     fetch("/api/health")
@@ -144,18 +144,18 @@ export function Studio() {
     const red = health?.redis;
     if (i === 0) {
       if (rag) return `${rag.vector_dimensions}-d · ${rag.embedding_model.split("/").pop()}`;
-      return red ? red.endpoint : "MiniLM · 384-d";
+      return red ? red.endpoint : "local corpus";
     }
     if (i === 1) {
       if (rag) return `top ${rag.retrieved_count} of ${rag.index_document_count} · ${rag.distance_metric}`;
-      return red ? `${red.document_count} vectors · cosine` : "cosine KNN";
+      return red ? `${red.document_count} docs · weighted` : "weighted retrieval";
     }
     if (i === 2) {
       if (result) return `${result.video_model_payload.length.toLocaleString()} chars assembled`;
       return "SYSTEM + evidence + skill";
     }
     if (result) return `${result.creative.model} · ${result.cached ? "cached" : "fresh"}`;
-    return "Claude Opus 4.8";
+    return "Seedance 2.0";
   }
 
   async function toggleMic() {
@@ -288,28 +288,28 @@ export function Studio() {
         </div>
 
         <header className="studio-hero">
-          <span className="studio-eyebrow"><i /> RESEARCH-BACKED · REDIS RAG · REALISTIC SHORT-FORM</span>
+          <span className="studio-eyebrow"><i /> RESEARCH-BACKED · LOCAL RAG · REALISTIC SHORT-FORM</span>
           <h1>Brief to broadcast, <em>engineered.</em></h1>
           <p>
-            Speak or type a brief. Cerebra retrieves proven ad patterns from Redis, researches what&apos;s
-            winning in your space, and engineers the exact payload your video model needs — system prompt,
+            Speak or type a brief. Cerebra retrieves proven ad patterns from its local corpus and
+            engineers the exact payload your video model needs — system prompt,
             evidence, and the Seedance 2.0 generation skill, assembled.
           </p>
         </header>
 
-        {/* ── RAG PIPELINE — live Redis Vector Search visualization ───────── */}
+        {/* ── RAG PIPELINE — local corpus retrieval visualization ───────── */}
         <section className={`rag${ragActive ? " running" : ""}${ragDone ? " done" : ""}${ragErr ? " errored" : ""}`}>
           <div className="rag-head">
             <div className="rag-title">
-              <span className="rag-redis"><Icon name="redis" size={14} /> REDIS</span>
+              <span className="rag-redis"><Icon name="redis" size={14} /> LOCAL</span>
               <b>RAG PIPELINE</b>
               <small>vector retrieval → context assembly → generation</small>
             </div>
             <div className={`rag-conn-badge ${redis?.connected ? "ok" : "off"}`}>
               <span className="dot" />
               {redis
-                ? <>VECTOR DB LIVE · {redis.endpoint} · {redis.knowledge_index} · {redis.document_count} vectors</>
-                : "connecting to redis vector store…"}
+                ? <>RAG CORPUS LIVE · {redis.endpoint} · {redis.knowledge_index} · {redis.document_count} docs</>
+                : "connecting to optimizer corpus…"}
             </div>
           </div>
           <div className="rag-track">
@@ -345,7 +345,7 @@ export function Studio() {
               {ragErr
                 ? <span className="bad">pipeline error — see message below</span>
                 : ragDone
-                  ? <span className="good">✓ context grounded in {result?.rag.retrieved_count ?? 0} Redis vectors · {result?.rag.verified ? "provenance verified" : "unverified"}</span>
+                  ? <span className="good">✓ context grounded in {result?.rag.retrieved_count ?? 0} corpus matches · {result?.rag.verified ? "provenance verified" : "unverified"}</span>
                   : <span className="run"><span className="rag-spin sm" /> running retrieval-augmented generation…</span>}
             </div>
           )}
@@ -397,7 +397,7 @@ export function Studio() {
               </div>
 
               <button className="toggle" onClick={() => setLiveResearch((v) => !v)} type="button">
-                <span>Live ad research<small>Web-search winning ads, cache to Redis</small></span>
+                  <span>Live ad research<small>Disabled in local mode; uses bundled corpus</small></span>
                 <span className={`sw${liveResearch ? " on" : ""}`}><i /></span>
               </button>
 
@@ -406,8 +406,7 @@ export function Studio() {
               </button>
               {loading && (
                 <div className="loading-note">
-                  <span className="spin" /> Retrieving from Redis + running Claude Opus 4.8 —
-                  this takes ~15–25s on a fresh brief.
+                  <span className="spin" /> Retrieving from the local corpus + assembling the payload.
                 </div>
               )}
               {error && <div className="err">{error}</div>}
@@ -450,7 +449,7 @@ export function Studio() {
             {result && (result.retrieved.length > 0 || result.research.length > 0) && (
               <div className="panel studio-card">
                 <div className="panel-head">
-                  <span>EVIDENCE — REDIS VECTOR RETRIEVAL{result.research.length ? " + LIVE RESEARCH" : ""}</span>
+                  <span>EVIDENCE — LOCAL RAG RETRIEVAL{result.research.length ? " + LIVE RESEARCH" : ""}</span>
                   <span className={result.rag.verified ? "ready-tag" : "warn"}>
                     {result.rag.verified ? "● VERIFIED" : "● UNVERIFIED"}
                   </span>

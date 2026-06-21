@@ -12,10 +12,10 @@
  *
  * This worker closes the loop: it watches regen/<id>/job.json for queued jobs
  * and, for each one, spawns a headless `codex exec` (which already has the Pika MCP
- * connected) to perform the generation + merge handoff. The job's status is
- * left as `awaiting_generation` while the agent works — a `.claimed` lock file
- * (not a status change) prevents double-processing — so the browser's existing
- * poll loop keeps polling until /complete flips it to merging/done.
+ * connected) to perform the generation + merge handoff. The job is marked as
+ * `generating` while the agent works and guarded by a `.claimed` lock file, so
+ * the browser can show the active stage and stale claims can be recovered if the
+ * agent process crashes.
  */
 import { spawn } from "node:child_process";
 import { readdir, readFile, writeFile, appendFile, stat, access } from "node:fs/promises";
@@ -63,7 +63,7 @@ async function readJob(dir) {
 }
 
 async function writeJobStatus(dir, job, patch) {
-  await writeFile(path.join(dir, "job.json"), JSON.stringify({ ...job, ...patch }, null, 2));
+  await writeFile(path.join(dir, "job.json"), JSON.stringify({ ...job, ...patch, updatedAt: new Date().toISOString() }, null, 2));
 }
 
 async function claimStale(dir) {
@@ -187,13 +187,14 @@ async function processJob(dir, job) {
   try {
     dlog(`CLAIM · provider=${job.provider || "seedance"} agent=${job.agent || "codex"} dur=${job.durationSec}s slot=${job.label || "?"} src=${job.sourceId || "?"} total=${job.totalSec ?? "?"}s`);
     await writeFile(lock, new Date().toISOString());
+    await writeJobStatus(dir, job, { status: "generating", stage: "agent", error: undefined });
 
     const startSize = await statSize(path.join(dir, "frame_start.png"));
     const endSize = await statSize(path.join(dir, "frame_end.png"));
     dlog(`frames: start=${startSize ?? "MISSING"}B end=${endSize ?? "MISSING"}B`);
     if (startSize == null || endSize == null) {
       dlog(`MARKING ERROR: frames missing — cannot generate`);
-      await writeJobStatus(dir, job, { status: "error", error: "Splice frames missing" });
+      await writeJobStatus(dir, job, { status: "error", stage: "frames", error: "Splice frames missing" });
       return;
     }
 
@@ -205,15 +206,16 @@ async function processJob(dir, job) {
     dlog(`outputs: clip.mp4=${clipSize ?? "absent"}B final.mp4=${finalSize ?? "absent"}B`);
 
     // The agent reports back to /complete, which moves the job to merging/done.
-    // Re-read so we never clobber that. Only intervene if it's still queued.
+    // Re-read so we never clobber that. Only intervene if it is still in an
+    // agent-owned status.
     const fresh = (await readJob(dir)) || job;
     dlog(`job.json status after agent = ${fresh.status}`);
-    if (fresh.status === "awaiting_generation") {
+    if (fresh.status === "awaiting_generation" || fresh.status === "generating") {
       if (result.ok) {
-        dlog(`WARN: agent printed REGEN_DONE but status is still awaiting_generation — /complete likely never landed. Leaving for retry.`);
+        dlog(`WARN: agent printed REGEN_DONE but status is still ${fresh.status} — /complete likely never landed. Leaving for stale-claim retry.`);
       } else {
         dlog(`MARKING ERROR: ${result.reason}`);
-        await writeJobStatus(dir, fresh, { status: "error", error: result.reason || "Generation failed" });
+        await writeJobStatus(dir, fresh, { status: "error", stage: "agent", error: result.reason || "Generation failed" });
       }
     }
     const finalStatus = (await readJob(dir))?.status;
@@ -248,13 +250,14 @@ async function tick() {
 
     const job = await readJob(dir);
     if (!job) continue;
-    if (job.status !== "awaiting_generation") continue;
+    if (job.status !== "awaiting_generation" && job.status !== "generating") continue;
 
     const claimed = await exists(path.join(dir, ".claimed"));
     if (claimed) {
       if (await claimStale(dir)) log(`RECLAIM ${name}: previous claim is stale (>${Math.round(STALE_CLAIM_MS / 60000)}m), reprocessing`);
       else { logSkipOnce(name, "already claimed (in progress)"); continue; }
     }
+    if (job.status === "generating" && !claimed) log(`RECOVER ${name}: status=generating without claim lock, reprocessing`);
 
     if (!(await exists(path.join(dir, "frame_start.png"))) || !(await exists(path.join(dir, "frame_end.png")))) {
       logSkipOnce(name, "frames not prepared yet");

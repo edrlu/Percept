@@ -4,25 +4,33 @@ export const runtime = "nodejs";
 export const maxDuration = 120;
 
 /**
- * Voice → text gateway. Forwards recorded audio (multipart) to the Python
- * optimizer's /transcribe, which runs OpenAI Whisper. Kept as a proxy so the
- * browser never holds the OpenAI key.
+ * Voice → text gateway. Uses OpenAI Whisper directly when OPENAI_API_KEY is
+ * present; otherwise the Studio can still work with typed briefs.
  */
 export async function POST(request: Request) {
-  const optimizerUrl = process.env.CEREBRA_OPTIMIZER_URL;
-  if (!optimizerUrl) {
+  const apiKey = process.env.OPENAI_API_KEY;
+  if (!apiKey) {
     return NextResponse.json(
-      { error: "No optimizer configured. Set CEREBRA_OPTIMIZER_URL." },
+      { error: "Voice transcription needs OPENAI_API_KEY. You can still type the brief." },
       { status: 503 },
     );
   }
+
   try {
-    const contentType = request.headers.get("content-type") ?? "application/octet-stream";
-    const body = Buffer.from(await request.arrayBuffer());
-    const upstream = await fetch(`${optimizerUrl.replace(/\/$/, "")}/transcribe`, {
+    const incoming = await request.formData();
+    const audio = incoming.get("audio");
+    if (!(audio instanceof File)) {
+      return NextResponse.json({ error: "No audio file provided." }, { status: 422 });
+    }
+
+    const outgoing = new FormData();
+    outgoing.append("model", process.env.CEREBRA_WHISPER_MODEL || "whisper-1");
+    outgoing.append("file", audio, audio.name || "clip.webm");
+
+    const upstream = await fetch("https://api.openai.com/v1/audio/transcriptions", {
       method: "POST",
-      headers: { "content-type": contentType },
-      body,
+      headers: { authorization: `Bearer ${apiKey}` },
+      body: outgoing,
       signal: AbortSignal.timeout(115_000),
     });
     return new NextResponse(await upstream.arrayBuffer(), {
@@ -33,7 +41,7 @@ export async function POST(request: Request) {
       },
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Transcription proxy failed";
+    const message = error instanceof Error ? error.message : "Transcription failed";
     return NextResponse.json({ error: message }, { status: 502 });
   }
 }

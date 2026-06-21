@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
-import { jobDir, mergeReplace, readJob, sourceDir, writeJob } from "@/app/lib/regen";
+import { appendJobLog, jobDir, mergeReplace, readJob, readJobLogTail, sourceDir, writeJob } from "@/app/lib/regen";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -31,18 +31,21 @@ export async function POST(request: Request) {
   const bytes = Buffer.from(await clip.arrayBuffer());
   await writeFile(clipPath, bytes);
   console.log(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · received clip ${bytes.length}B · merging [${job.startSec.toFixed(2)}s, ${job.endSec.toFixed(2)}s]`);
+  await appendJobLog(jobId, `/complete received clip=${bytes.length}B; merging replace=[${job.startSec.toFixed(3)}, ${job.endSec.toFixed(3)}]`);
 
-  await writeJob({ ...job, status: "merging" });
+  await writeJob({ ...job, status: "merging", stage: "merge" });
   try {
     const t = Date.now();
-    await mergeReplace(source, clipPath, job.startSec, job.endSec, final);
-    await writeJob({ ...job, status: "done" });
+    await mergeReplace(source, clipPath, job.startSec, job.endSec, final, { jobId });
+    await writeJob({ ...job, status: "done", stage: "complete" });
+    await appendJobLog(jobId, `/complete merge OK in ${((Date.now() - t) / 1000).toFixed(1)}s; final=${final}`);
     console.log(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · merge OK in ${((Date.now() - t) / 1000).toFixed(1)}s → done`);
     return NextResponse.json({ ok: true, downloadUrl: `/api/regenerate/file?job=${jobId}&name=final.mp4` });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Merge failed";
-    await writeJob({ ...job, status: "error", error: message });
+    await writeJob({ ...job, status: "error", stage: "merge", error: message });
+    await appendJobLog(jobId, `/complete MERGE FAILED: ${message}`);
     console.error(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · MERGE FAILED: ${message}`);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json({ error: message, logTail: await readJobLogTail(jobId) }, { status: 500 });
   }
 }

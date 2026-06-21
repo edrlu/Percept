@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { extractFrame, jobDir, probe, readJob, sourceDir, writeJob, type RegenJob } from "@/app/lib/regen";
+import { appendJobLog, extractFrame, jobDir, probe, readJob, readJobLogTail, sourceDir, writeJob, type RegenJob } from "@/app/lib/regen";
 import { REGEN_META_PROMPT } from "@/app/lib/regenPrompt";
 
 export const runtime = "nodejs";
@@ -15,7 +15,7 @@ export async function GET(request: Request) {
   if (!id) return NextResponse.json({ error: "Missing job id" }, { status: 400 });
   const job = await readJob(id);
   if (!job) return NextResponse.json({ error: "Unknown job" }, { status: 404 });
-  return NextResponse.json(job, { headers: { "cache-control": "no-store" } });
+  return NextResponse.json({ ...job, logTail: await readJobLogTail(id), logUrl: `/api/regenerate/file?job=${id}&name=job.log` }, { headers: { "cache-control": "no-store" } });
 }
 
 /**
@@ -40,26 +40,38 @@ export async function POST(request: Request) {
     const dir = sourceDir(id);
     await mkdir(path.join(dir, "frames"), { recursive: true });
     const source = path.join(dir, "source.mp4");
-    await writeFile(source, Buffer.from(await video.arrayBuffer()));
-    const meta = await probe(source);
-    rlog(`source stored ${id} · ${video.size}B · duration=${meta.duration}s`);
-    return NextResponse.json({ sourceId: id, duration: meta.duration });
+    try {
+      await writeFile(source, Buffer.from(await video.arrayBuffer()));
+      const meta = await probe(source);
+      rlog(`source stored ${id} · ${video.size}B · duration=${meta.duration}s`);
+      return NextResponse.json({ sourceId: id, duration: meta.duration });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Source video could not be stored or probed";
+      rlog(`source FAILED ${id}: ${message}`);
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 
   const sourceId = form.get("sourceId") as string;
-  const source = path.join(sourceDir(sourceId), "source.mp4");
   if (!sourceId) return NextResponse.json({ error: "Missing source asset" }, { status: 400 });
+  const source = path.join(sourceDir(sourceId), "source.mp4");
   try { await readFile(source); } catch { return NextResponse.json({ error: "Source asset expired" }, { status: 404 }); }
   if (!Number.isFinite(startSec) || !Number.isFinite(endSec) || endSec <= startSec) return NextResponse.json({ error: "Invalid start/end" }, { status: 400 });
 
   if (action === "frames") {
     const id = `frames_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
     const dir = path.join(sourceDir(sourceId), "frames");
-    const meta = await probe(source);
-    await extractFrame(source, Math.max(0, startSec), path.join(dir, `${id}_start.png`));
-    await extractFrame(source, Math.min(meta.duration - 0.05, endSec), path.join(dir, `${id}_end.png`));
-    rlog(`frames ${id} extracted from ${sourceId} · start=${startSec.toFixed(2)}s end=${endSec.toFixed(2)}s`);
-    return NextResponse.json({ frameId: id, startFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=start`, endFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=end` });
+    try {
+      const meta = await probe(source);
+      await extractFrame(source, Math.max(0, startSec), path.join(dir, `${id}_start.png`));
+      await extractFrame(source, Math.max(0, Math.min(Math.max(0, meta.duration - 0.05), endSec)), path.join(dir, `${id}_end.png`));
+      rlog(`frames ${id} extracted from ${sourceId} · start=${startSec.toFixed(2)}s end=${endSec.toFixed(2)}s`);
+      return NextResponse.json({ frameId: id, startFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=start`, endFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=end` });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Frame extraction failed";
+      rlog(`frames FAILED ${id} from ${sourceId}: ${message}`);
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
   }
 
   const frameId = form.get("frameId") as string;
@@ -79,6 +91,7 @@ export async function POST(request: Request) {
     const job: RegenJob = {
       id,
       status: "awaiting_generation",
+      stage: "queued",
       startSec,
       endSec,
       durationSec: durationSec === 10 ? 10 : 5,
@@ -91,6 +104,7 @@ export async function POST(request: Request) {
       createdAt: new Date().toISOString(),
     };
     await writeJob(job);
+    await appendJobLog(id, `queued provider=${provider} agent=${agent} duration=${job.durationSec}s source=${sourceId} frame=${frameId} slot=${label ?? "?"}`);
     rlog(`job QUEUED ${id} · provider=${provider} agent=${agent} dur=${job.durationSec}s slot=${label ?? "?"} (worker will pick up within poll interval)`);
 
     return NextResponse.json({
@@ -103,7 +117,8 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Frame extraction failed";
-    await writeJob({ id, status: "error", startSec, endSec, durationSec, totalSec: 0, sourceId, frameId, error: message, createdAt: new Date().toISOString() });
-    return NextResponse.json({ error: message }, { status: 500 });
+    await writeJob({ id, status: "error", stage: "setup", startSec, endSec, durationSec, totalSec: 0, sourceId, frameId, error: message, createdAt: new Date().toISOString() });
+    await appendJobLog(id, `setup FAILED: ${message}`);
+    return NextResponse.json({ error: message, logTail: await readJobLogTail(id) }, { status: 500 });
   }
 }

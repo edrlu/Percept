@@ -29,13 +29,14 @@ const FAMILY_KEYS = FAMILY_DETAILS.map((f) => f.key);
 const FILMSTRIP_FRAME_COUNT = 24;
 
 type LogStatus = "active" | "done" | "error" | "note";
-type LogEntry = { id: string; ts: number; title: string; detail?: string; status: LogStatus; bar?: boolean; href?: string };
-type RegenStatus = "extracting" | "awaiting_generation" | "merging" | "done" | "error";
-type RegenJobState = { status: RegenStatus; jobId?: string; startFrame?: string; endFrame?: string; downloadUrl?: string; error?: string };
+type LogEntry = { id: string; ts: number; title: string; detail?: string; status: LogStatus; bar?: boolean; href?: string; linkLabel?: string };
+type RegenStatus = "extracting" | "awaiting_generation" | "generating" | "merging" | "done" | "error";
+type RegenJobState = { status: RegenStatus; jobId?: string; startFrame?: string; endFrame?: string; downloadUrl?: string; logUrl?: string; logTail?: string; error?: string };
 type Cut = { start: number; end: number; frameId?: string; preparing?: boolean; frameRequested?: boolean; frameError?: string };
 const REGEN_LABEL: Record<RegenStatus, string> = {
   extracting: "Extracting frames…",
   awaiting_generation: "Generating via MCP agent + Pika…",
+  generating: "Agent is generating clip…",
   merging: "Merging clip…",
   done: "Regenerated",
   error: "Failed",
@@ -528,7 +529,7 @@ export default function Home() {
       const response = await fetch("/api/regenerate", { method: "POST", body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Generation setup failed");
-      setRegenJobs((j) => ({ ...j, [key]: { status: "awaiting_generation", jobId: data.jobId, startFrame: data.startFrame, endFrame: data.endFrame } }));
+      setRegenJobs((j) => ({ ...j, [key]: { status: "awaiting_generation", jobId: data.jobId, startFrame: data.startFrame, endFrame: data.endFrame, logUrl: data.jobId ? `/api/regenerate/file?job=${data.jobId}&name=job.log` : undefined } }));
       const modelName = REGEN_PROVIDERS.find((p) => p.id === genModel)?.name ?? genModel;
       const agentName = genAgent === "claude" ? "Claude" : "Codex";
       logUpsert(logId, { title: `Regenerate ${slot}`, detail: `Frames ready · generating ${durationSec}s clip via ${agentName} + Pika (${modelName})`, status: "active", bar: true });
@@ -541,7 +542,7 @@ export default function Home() {
 
   // Poll queued jobs until the agent finishes the generation + merge.
   useEffect(() => {
-    const active = Object.entries(regenJobs).filter(([, v]) => v.jobId && (v.status === "awaiting_generation" || v.status === "merging"));
+    const active = Object.entries(regenJobs).filter(([, v]) => v.jobId && (v.status === "awaiting_generation" || v.status === "generating" || v.status === "merging"));
     if (!active.length) return;
     const id = setInterval(async () => {
       for (const [key, v] of active) {
@@ -549,13 +550,14 @@ export default function Home() {
           const response = await fetch(`/api/regenerate?job=${v.jobId}`, { cache: "no-store" });
           if (!response.ok) continue;
           const job = await response.json();
-          if (job.status !== v.status) {
+          if (job.status !== v.status || job.logTail !== v.logTail) {
             const downloadUrl = `/api/regenerate/file?job=${v.jobId}&name=final.mp4`;
-            setRegenJobs((prev) => ({ ...prev, [key]: { ...prev[key], status: job.status, error: job.error,
+            setRegenJobs((prev) => ({ ...prev, [key]: { ...prev[key], status: job.status, error: job.error, logTail: job.logTail, logUrl: job.logUrl,
               downloadUrl: job.status === "done" ? downloadUrl : prev[key]?.downloadUrl } }));
             const slot = key.split("-").map((s) => formatTime(Number(s))).join("–");
             const logId = `regen_${key}`;
-            if (job.status === "merging") logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Clip generated · merging into the video", status: "active", bar: true });
+            if (job.status === "generating") logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Agent picked up the job · generating with Pika", status: "active", bar: true });
+            else if (job.status === "merging") logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Clip generated · merging into the video", status: "active", bar: true });
             else if (job.status === "done") {
               try {
                 await replacePreviewWithRegeneratedVideo(downloadUrl, { start: Number(key.split("-")[0]), end: Number(key.split("-")[1]) }, key);
@@ -565,7 +567,7 @@ export default function Home() {
                 logUpsert(logId, { title: `Regenerate ${slot}`, detail: message, status: "error" });
               }
             }
-            else if (job.status === "error") logUpsert(logId, { title: `Regenerate ${slot}`, detail: job.error || "Merge failed", status: "error" });
+            else if (job.status === "error") logUpsert(logId, { title: `Regenerate ${slot}`, detail: `${job.error || "Regeneration failed"}${job.logUrl ? " · log saved" : ""}`, status: "error", href: job.logUrl, linkLabel: "View job log" });
           }
         } catch { /* keep polling */ }
       }
@@ -659,7 +661,7 @@ export default function Home() {
         {videoUrl && <div className="panel segments-panel"><div className="panel-head"><span>04 / SEGMENTS TO REGENERATE</span>{segments.length > 0 && <span className="segments-count">{segments.length}</span>}</div>
           {segments.length === 0
             ? <p className="panel-subtitle">{spliceMode ? "Drag across the timeline to cut a segment out. Each cut is queued here for regeneration." : "Turn on Splice, then drag the timeline to cut segments out for AI regeneration."}</p>
-            : <div className="segment-list">{segments.map((seg, i) => { const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1; const key = `${seg.start}-${seg.end}`; const job = regenJobs[key]; const busy = Boolean(seg.preparing) || Boolean(job && (job.status === "extracting" || job.status === "awaiting_generation" || job.status === "merging")); return <div className={`segment-card ${job?.status === "done" ? "done" : ""}`} key={key}>
+            : <div className="segment-list">{segments.map((seg, i) => { const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1; const key = `${seg.start}-${seg.end}`; const job = regenJobs[key]; const busy = Boolean(seg.preparing) || Boolean(job && (job.status === "extracting" || job.status === "awaiting_generation" || job.status === "generating" || job.status === "merging")); return <div className={`segment-card ${job?.status === "done" ? "done" : ""}`} key={key}>
               <SegmentPreview src={videoUrl} start={seg.start * factor} end={seg.end * factor}/>
               <div className="segment-meta"><span className="segment-tag">SEG {i + 1}</span><b>{formatTime(seg.start)} – {formatTime(seg.end)}</b><small>{Math.round(seg.end - seg.start)}s slot · regenerated in place</small></div>
               <div className="segment-actions">
@@ -723,7 +725,7 @@ export default function Home() {
                     <div className="log-head"><b>{log.title}</b><time>{new Date(log.ts).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" })}</time></div>
                     {log.detail && <p>{log.detail}</p>}
                     {log.status === "active" && log.bar && <span className="log-bar"><i/></span>}
-                    {log.href && <a className="log-download" href={log.href} download>Download mp4</a>}
+                    {log.href && <a className="log-download" href={log.href} download>{log.linkLabel ?? "Download mp4"}</a>}
                   </div>
                 </div>)}
             <div ref={logEndRef}/>

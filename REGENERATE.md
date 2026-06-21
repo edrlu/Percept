@@ -24,9 +24,11 @@ the worker isn't running (e.g. `codex` isn't installed).
    ▼
 [next]     save source.mp4, ffmpeg-extract frame_start.png + frame_end.png
            write job.json { status: "awaiting_generation", ... }     →  regen/<id>/
+           append regen/<id>/job.log with setup + ffmpeg trace
    │
    ▼
 [codex]    (agent, via MCP — auto-run by worker/regen-worker.mjs)
+           status → "generating"; append regen/<id>/agent.log
            1. read regen/<id>/frame_start.png + frame_end.png
            2. run the prompt-engineer meta-prompt (app/lib/regenPrompt.ts) on the
               two frames → produce `prompt` + `negative_prompt` (Kling uses both;
@@ -43,8 +45,11 @@ the worker isn't running (e.g. `codex` isn't installed).
            → GET /api/regenerate/file?job=<id>&name=final.mp4  (attachment)
 ```
 
-The browser polls every 2.5s while a job is `awaiting_generation` / `merging`,
-so the card updates on its own once the agent finishes step 4.
+The browser polls every 2.5s while a job is `awaiting_generation` /
+`generating` / `merging`, so the card updates on its own once the agent
+finishes step 4. Poll responses include `logTail` and `logUrl`; on disk,
+`regen/<id>/job.log` has the server/ffmpeg trace and `regen/<id>/agent.log` has
+the headless agent trace. If anything breaks, the UI links to the saved job log.
 
 ## Agent step — generate_video parameters
 
@@ -112,6 +117,6 @@ stays put ("slot kept in place").
 - `app/api/regenerate/route.ts` — create job + extract frames; GET poll.
 - `app/api/regenerate/complete/route.ts` — receive clip, merge, mark done.
 - `app/api/regenerate/file/route.ts` — serve frames / download final.
-- `regen/<id>/` — per-job scratch (gitignored): source, frames, clip, final, job.json.
+- `regen/<id>/` — per-job scratch (gitignored): source, frames, clip, final, job.json, job.log, agent.log.
 
 Requires `ffmpeg`/`ffprobe` on PATH. No TRIBE v2 worker needed for regeneration.
