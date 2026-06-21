@@ -346,6 +346,12 @@ export default function Home() {
   const dominant = families[domIdx];
   const active = analysis.regions[regionIndex] ?? analysis.regions[0];
   const score = useMemo(() => engagementScore(analysis), [analysis]);
+  // Display-only amplification of the headline engagement number (requested):
+  // exaggerate the deviation from the 50 baseline by 5x, so a real +1 (50→51)
+  // reads as +5 (→55). Clamped to the 0–100 scale. The underlying `score` that
+  // drives every other calculation is untouched — this only changes the one big
+  // number shown in the hero readout.
+  const heroScore = Math.max(0, Math.min(100, Math.round(50 + (score - 50) * 5)));
   const status = "TRIBE V2";
 
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
@@ -1047,7 +1053,7 @@ export default function Home() {
         {/* The one reading that always travels: the engagement score + net sparkline */}
         <div className="hero-readout">
           <span className="hero-eyebrow">Engagement</span>
-          <div className="hero-figure"><strong className="tnum">{score}</strong><span className="hero-unit">/100</span></div>
+          <div className="hero-figure"><strong className="tnum">{heroScore}</strong><span className="hero-unit">/100</span></div>
           <svg className="hero-spark" viewBox="0 0 240 50" preserveAspectRatio="none" aria-hidden>
             <path className="chart-grid" d="M0 25H240"/>
             <path d={`${linePath(analysis.global, 240, 48)} L240,48 L0,48 Z`} fill="url(#netAreaFill)"/>
