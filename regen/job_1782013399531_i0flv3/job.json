@@ -1,0 +1,14 @@
+{
+  "id": "job_1782013399531_i0flv3",
+  "status": "error",
+  "startSec": 4.262453336646879,
+  "endSec": 9.262453336646878,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782013382596_zj2zo4",
+  "frameId": "frames_1782013398254_4766sd",
+  "provider": "seedance",
+  "label": "0:04–0:09",
+  "createdAt": "2026-06-21T03:43:19.585Z",
+  "error": "REGEN_FAILED: Seedance task polling returned invalid_input; no video URL was available."
+}

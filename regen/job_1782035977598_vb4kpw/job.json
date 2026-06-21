@@ -1,0 +1,18 @@
+{
+  "id": "job_1782035977598_vb4kpw",
+  "status": "done",
+  "stage": "complete",
+  "startSec": 0,
+  "endSec": 5,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782035950275_7rb9ct",
+  "frameId": "frames_1782035972054_5rgzk4",
+  "provider": "seedance",
+  "agent": "codex",
+  "runId": "2026-06-21T09-59-37-565Z",
+  "takeIndex": 2,
+  "label": "0:00–0:05 · take 3",
+  "createdAt": "2026-06-21T09:59:38.515Z",
+  "updatedAt": "2026-06-21T10:03:34.741Z"
+}

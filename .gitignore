@@ -44,7 +44,10 @@ yarn-error.log*
 *.tsbuildinfo
 
 # Clip-regeneration job scratch (source video, extracted frames, generated + merged clips)
-/regen/
+# /regen/
+
+# Per-run segment archive: floor clip + generated takes saved per regeneration run
+/data/
 
 # Local TRIBE v2 runtime
 /.venv/
@@ -59,3 +62,5 @@ yarn-error.log*
 /skills-lock.json
 __pycache__/
 next-env.d.ts
+.regen-worker.pid
+.regen-worker-*.log

@@ -1,0 +1,11 @@
+{
+  "id": "job_1782001298674_rsurpy",
+  "status": "error",
+  "startSec": 2.976624950364489,
+  "endSec": 7.97662495036449,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "label": "0:02–0:07",
+  "createdAt": "2026-06-21T00:21:38.876Z",
+  "error": "You've hit your session limit · resets 7:50pm (America/Los_Angeles)"
+}

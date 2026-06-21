@@ -7,6 +7,7 @@ surface tensor to a browser. The model still runs its full cortical prediction.
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
@@ -321,26 +322,51 @@ def resample_to_mesh(values: np.ndarray, hemi: str, source_vertices: int) -> np.
     return values[:, _upsample_index(hemi, source_vertices)]
 
 
-def build_response(predictions: np.ndarray) -> dict:
+def reference_stats(predictions: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Per-vertex temporal mean/SD over a clip — the within-video baseline.
+    Persisted per scored video so later clips (regenerated takes) can be
+    z-scored against THIS video's baseline instead of their own, making their
+    engagement scores comparable across clips (the fixed reference the model
+    authors deferred). SD is floored to avoid divide-by-zero on flat vertices."""
+    pred = np.asarray(predictions, dtype=np.float64)
+    mu = pred.mean(axis=0)
+    sd = pred.std(axis=0)
+    sd[sd < 1e-6] = 1e-6
+    return mu, sd
+
+
+def build_response(predictions: np.ndarray, ref: tuple[np.ndarray, np.ndarray] | None = None) -> dict:
     """Summarise predicted surface responses over the four engagement families.
 
-    Within-video, signed, per-vertex baseline: each vertex is z-scored against
-    its OWN response over the clip, so a family trace reflects how far that
-    territory deviates from its baseline (50 = baseline, 100 = +ENGAGEMENT_Z_REF
-    SD, 0 = -ENGAGEMENT_Z_REF SD). Traces are parcel-balanced and placed on one
-    fixed 0..100 scale so the four families are directly comparable.
-    All four are weighted equally; `reliability` is reported but never weights the
-    score. Overall engagement is the equal-weighted mean of the four families.
+    Default (ref=None): within-video, signed, per-vertex baseline — each vertex
+    is z-scored against its OWN temporal mean/SD over this clip, so a family
+    trace reflects how far that territory deviates from its own baseline
+    (50 = baseline, 100 = +ENGAGEMENT_Z_REF SD, 0 = -ENGAGEMENT_Z_REF SD).
+
+    When ref=(mu, sd) is supplied (per-vertex arrays from a previous clip), each
+    vertex is z-scored against THAT reference instead of its own clip, making
+    the resulting engagement scores directly comparable to the original video.
+
+    Traces are parcel-balanced and placed on one fixed 0..100 scale so the four
+    families are directly comparable within a result. All four are weighted
+    equally; `reliability` is reported but never weights the score. Overall
+    engagement is the equal-weighted mean of the four families.
     """
     assert model is not None
     pred = np.asarray(predictions, dtype=np.float64)
     n_frames = int(pred.shape[0])
 
-    # Per-vertex temporal baseline (signed): (value - vertex mean) / vertex SD.
-    mu = pred.mean(axis=0, keepdims=True)
-    sd = pred.std(axis=0, keepdims=True)
-    sd[sd < 1e-6] = 1e-6
-    z = (pred - mu) / sd  # (T, V) signed; > 0 means above this vertex's baseline
+    # Per-vertex baseline (signed z): (value - mean) / SD. When `ref` is given we
+    # z-score against ANOTHER video's baseline (the original), so this clip's
+    # engagement is measured relative to the original rather than to itself.
+    if ref is None:
+        mu = pred.mean(axis=0, keepdims=True)
+        sd = pred.std(axis=0, keepdims=True)
+    else:
+        mu = np.asarray(ref[0], dtype=np.float64).reshape(1, -1)
+        sd = np.asarray(ref[1], dtype=np.float64).reshape(1, -1)
+    sd = np.where(sd < 1e-6, 1e-6, sd)
+    z = (pred - mu) / sd  # (T, V) signed; > 0 means above the (reference) baseline
 
     families = _family_rois()
     traces = np.zeros((len(ENGAGEMENT_FAMILIES), n_frames), dtype=np.float32)
@@ -538,10 +564,82 @@ async def predict(video: UploadFile = File(...)):
             print("[predict] inference FAILED:\n" + traceback.format_exc(), flush=True)
             raise HTTPException(status_code=500, detail=f"TRIBE v2 inference failed: {exc}") from exc
 
+        result["referenceId"] = digest
         result["cached"] = False
+        try:
+            mu, sd = reference_stats(predictions)
+            np.savez(PREDICTIONS_DIR / f"{digest}.ref.npz", mu=mu, sd=sd)
+        except Exception as exc:
+            print(f"[cache] failed to save reference {digest[:12]}: {exc}")
         try:
             cache_file.write_text(json.dumps(result))
             print(f"[cache] saved {digest[:12]} -> {cache_file}")
         except Exception as exc:
             print(f"[cache] failed to save {cache_file.name}: {exc}")
         return result
+
+
+def _load_reference(reference_id: str) -> tuple[np.ndarray, np.ndarray] | None:
+    """Load the persisted per-vertex baseline for an already-scored video."""
+    safe = "".join(c for c in reference_id if c in "0123456789abcdefABCDEF")
+    ref_file = PREDICTIONS_DIR / f"{safe}.ref.npz"
+    if not ref_file.exists():
+        return None
+    data = np.load(ref_file)
+    return data["mu"], data["sd"]
+
+
+def _score_against_reference(video_path: Path, ref: tuple[np.ndarray, np.ndarray]) -> dict:
+    """Run TRIBE on one clip and score it against the given reference baseline."""
+    infer_path = _maybe_downscale(video_path)
+    events = model.get_events_dataframe(video_path=str(infer_path))
+    predictions, _ = model.predict(events, verbose=False)
+    return build_response(predictions, ref=ref)
+
+
+@app.post("/score_takes")
+async def score_takes(referenceId: str = Form(...), takes: list[UploadFile] = File(...)):
+    """Score regenerated takes against an already-scored ORIGINAL video.
+
+    The original is NOT re-encoded: we reuse the per-vertex baseline saved by
+    /predict (keyed by `referenceId` = the original's sha256). Each take is
+    z-scored against that baseline, so the takes are directly comparable to one
+    another and to the original. Returns one headline (mean of the 4 families)
+    and the per-frame series per take, plus the best take index."""
+    if model is None:
+        raise HTTPException(status_code=503, detail="Model is still loading.")
+    ref = _load_reference(referenceId)
+    if ref is None:
+        raise HTTPException(status_code=409, detail="Unknown referenceId — score the original first.")
+    if not takes:
+        raise HTTPException(status_code=400, detail="No takes supplied.")
+
+    out: list[dict] = []
+    with tempfile.TemporaryDirectory(prefix="score-takes-") as tmp:
+        for upload_index, up in enumerate(takes):
+            match = re.search(r"take_(\d+)", up.filename or "")
+            take_index = int(match.group(1)) - 1 if match else upload_index
+            suffix = Path(up.filename or "take.mp4").suffix.lower() or ".mp4"
+            dest = Path(tmp) / f"take_{upload_index}{suffix}"
+            with dest.open("wb") as fh:
+                while chunk := await up.read(1024 * 1024):
+                    fh.write(chunk)
+            await up.close()
+            try:
+                resp = _score_against_reference(dest, ref)
+            except Exception as exc:
+                import traceback
+                print("[score_takes] inference FAILED:\n" + traceback.format_exc(), flush=True)
+                raise HTTPException(status_code=500, detail=f"Take scoring failed: {exc}") from exc
+            out.append({
+                "takeIndex": take_index,
+                "score": resp["engagementScore"],
+                "factors": {r["short"]: r["score"] for r in resp["regions"]},
+                "series": {"global": resp["global"], **{r["short"]: r["values"] for r in resp["regions"]}},
+            })
+
+    if not out:
+        raise HTTPException(status_code=400, detail="No takes could be scored.")
+    best = max(range(len(out)), key=lambda i: out[i]["score"])
+    average = round(sum(t["score"] for t in out) / len(out), 1)
+    return {"best": out[best]["takeIndex"], "average": average, "takes": out}

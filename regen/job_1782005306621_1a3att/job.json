@@ -1,0 +1,12 @@
+{
+  "id": "job_1782005306621_1a3att",
+  "status": "done",
+  "startSec": 1,
+  "endSec": 6,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782005162666_ylf2et",
+  "frameId": "frames_1782005196274_qakcg1",
+  "label": "diagnostic",
+  "createdAt": "2026-06-21T01:28:26.713Z"
+}

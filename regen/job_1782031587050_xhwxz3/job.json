@@ -1,0 +1,16 @@
+{
+  "id": "job_1782031587050_xhwxz3",
+  "status": "done",
+  "stage": "complete",
+  "startSec": 0,
+  "endSec": 5,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782031574290_o89cye",
+  "frameId": "frames_1782031584954_0l37m8",
+  "provider": "seedance",
+  "agent": "codex",
+  "label": "0:00–0:05",
+  "createdAt": "2026-06-21T08:46:27.098Z",
+  "updatedAt": "2026-06-21T08:50:06.391Z"
+}

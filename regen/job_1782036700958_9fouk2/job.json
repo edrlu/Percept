@@ -1,0 +1,14 @@
+{
+  "id": "job_1782036700958_9fouk2",
+  "status": "error",
+  "stage": "setup",
+  "startSec": 25.093061,
+  "endSec": 30.093061,
+  "durationSec": 5,
+  "totalSec": 0,
+  "sourceId": "source_1782036648110_zyy8ml",
+  "frameId": "frames_1782036695305_haffzn",
+  "error": "ENOENT: no such file or directory, copyfile '/Users/edrlu/Documents/Cerebra/regen/sources/source_1782036648110_zyy8ml/frames/frames_1782036695305_haffzn_end.png' -> '/Users/edrlu/Documents/Cerebra/regen/job_1782036700958_9fouk2/frame_end.png'",
+  "createdAt": "2026-06-21T10:11:40.997Z",
+  "updatedAt": "2026-06-21T10:11:40.997Z"
+}

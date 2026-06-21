@@ -1,0 +1,16 @@
+{
+  "id": "job_1782031480029_amufjo",
+  "status": "done",
+  "stage": "complete",
+  "startSec": 0,
+  "endSec": 5,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782031421101_bya8nj",
+  "frameId": "frames_1782031477274_rv3bzr",
+  "provider": "seedance",
+  "agent": "codex",
+  "label": "0:00–0:05",
+  "createdAt": "2026-06-21T08:44:40.075Z",
+  "updatedAt": "2026-06-21T08:48:24.679Z"
+}

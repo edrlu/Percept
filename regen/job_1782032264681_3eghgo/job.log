@@ -1,0 +1,61 @@
+[2026-06-21T08:57:44.730Z] queued provider=seedance agent=codex duration=5s source=source_1782032254519_o618ob frame=frames_1782032263094_on8020 slot=0:00–0:05
+[2026-06-21T09:25:29.384Z] /complete received clip=2610894B; merging replace=[0.000, 5.000]
+[2026-06-21T09:25:29.392Z] probe-source-before-merge START: ffprobe -v error -show_entries stream=codec_type,width,height,r_frame_rate:format=duration -of json /Users/edrlu/Documents/Cerebra/regen/sources/source_1782032254519_o618ob/source.mp4
+[2026-06-21T09:25:29.439Z] probe-source-before-merge OK in 0.05s
+[2026-06-21T09:25:29.439Z] probe-generated-clip START: ffprobe -v error -show_entries stream=codec_type,width,height,r_frame_rate:format=duration -of json /Users/edrlu/Documents/Cerebra/regen/job_1782032264681_3eghgo/clip.mp4
+[2026-06-21T09:25:29.460Z] probe-generated-clip OK in 0.02s
+[2026-06-21T09:25:29.460Z] merge plan: source=1920x1080 fps=24000/1001 duration=30.093s audio=true; clip=1280x720 duration=5.042s audio=false; replace=[0.000, 5.000], segments=2
+[2026-06-21T09:25:29.462Z] merge-ffmpeg START: ffmpeg -y -i /Users/edrlu/Documents/Cerebra/regen/sources/source_1782032254519_o618ob/source.mp4 -i /Users/edrlu/Documents/Cerebra/regen/job_1782032264681_3eghgo/clip.mp4 -filter_complex [1:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24000/1001,format=yuv420p,setpts=PTS-STARTPTS[v1];anullsrc=channel_layout=stereo:sample_rate=44100,atrim=duration=5.042,asetpts=PTS-STARTPTS[a1];[0:v]trim=start=5.000,setpts=PTS-STARTPTS[v2];[0:a]atrim=start=5.000,asetpts=PTS-STARTPTS[a2];[v1][a1][v2][a2]concat=n=2:v=1:a=1[vout][aout] -map [vout] -map [aout] -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 20 -c:a aac -movflags +faststart /Users/edrlu/Documents/Cerebra/regen/job_1782032264681_3eghgo/final.mp4
+[2026-06-21T09:25:31.848Z] merge-ffmpeg OK in 2.39s
+stderr:
+s: isomiso2avc1mp41
+  Duration: 00:00:05.04, start: 0.000000, bitrate: 4142 kb/s
+  Stream #1:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 1280x720, 4139 kb/s, 24 fps, 24 tbr, 12288 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+Stream mapping:
+  Stream #0:0 (libdav1d) -> trim:default
+  Stream #0:1 (aac) -> atrim:default
+  Stream #1:0 (h264) -> scale:default
+  concat -> Stream #0:0 (libx264)
+  concat -> Stream #0:1 (aac)
+Press [q] to stop, [?] for help
+[libx264 @ 0xac5055880] using SAR=1/1
+[libx264 @ 0xac5055880] using cpu capabilities: ARMv8 NEON DotProd I8MM
+[libx264 @ 0xac5055880] profile High, level 4.0, 4:2:0, 8-bit
+[libx264 @ 0xac5055880] 264 - core 165 r3222 b35605a - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=15 lookahead_threads=5 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=23 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=20.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+Output #0, mp4, to '/Users/edrlu/Documents/Cerebra/regen/job_1782032264681_3eghgo/final.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomav01iso2mp41
+    encoder         : Lavf62.12.100
+  Stream #0:0: Video: h264 (avc1 / 0x31637661), yuv420p(tv, bt709/unknown/unknown, progressive), 1920x1080 [SAR 1:1 DAR 16:9], q=2-31, 23.98 fps, 24k tbn
+    Metadata:
+      encoder         : Lavc62.28.100 libx264
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+  Stream #0:1: Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s
+    Metadata:
+      encoder         : Lavc62.28.100 aac
+frame=   89 fps=0.0 q=25.0 size=    1792KiB time=00:00:03.62 bitrate=4045.7kbits/s speed=7.18x elapsed=0:00:00.50    frame=  272 fps=269 q=25.0 size=    3840KiB time=00:00:11.26 bitrate=2793.4kbits/s speed=11.1x elapsed=0:00:01.01    frame=  476 fps=315 q=25.0 size=    6144KiB time=00:00:19.76 bitrate=2545.9kbits/s speed=13.1x elapsed=0:00:01.51    frame=  619 fps=307 q=25.0 size=    8704KiB time=00:00:25.73 bitrate=2770.8kbits/s speed=12.8x elapsed=0:00:02.01    [mp4 @ 0xac4c13200] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 0xac4c00cc0] video:10659KiB audio:406KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.215002%
+frame=  721 fps=307 q=-1.0 Lsize=   11088KiB time=00:00:29.98 bitrate=3029.0kbits/s speed=12.8x elapsed=0:00:02.34    
+[libx264 @ 0xac5055880] frame I:16    Avg QP: 9.31  size: 84201
+[libx264 @ 0xac5055880] frame P:214   Avg QP:16.24  size: 28721
+[libx264 @ 0xac5055880] frame B:491   Avg QP:19.27  size:  6966
+[libx264 @ 0xac5055880] consecutive B-frames:  5.3%  9.2%  7.9% 77.7%
+[libx264 @ 0xac5055880] mb I  I16..4: 63.0% 16.6% 20.3%
+[libx264 @ 0xac5055880] mb P  I16..4: 11.7%  9.3%  2.1%  P16..4: 14.5%  8.0%  4.1%  0.0%  0.0%    skip:50.2%
+[libx264 @ 0xac5055880] mb B  I16..4:  1.3%  1.2%  0.1%  B16..8: 10.0%  3.1%  0.5%  direct: 3.4%  skip:80.4%  L0:38.7% L1:45.0% BI:16.3%
+[libx264 @ 0xac5055880] 8x8 transform intra:36.2% inter:34.0%
+[libx264 @ 0xac5055880] coded y,uvDC,uvAC intra: 35.3% 37.3% 16.7% inter: 4.3% 6.0% 0.4%
+[libx264 @ 0xac5055880] i16 v,h,dc,p: 71% 15%  7%  6%
+[libx264 @ 0xac5055880] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 35% 18% 20%  2%  6%  5%  5%  5%  4%
+[libx264 @ 0xac5055880] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 28% 17% 16%  3% 10%  7%  7%  6%  6%
+[libx264 @ 0xac5055880] i8c dc,h,v,p: 61% 13% 20%  5%
+[libx264 @ 0xac5055880] Weighted P-Frames: Y:1.4% UV:0.9%
+[libx264 @ 0xac5055880] kb/s:2903.45
+[aac @ 0xac5055f80] Qavg: 11636.675
+
+[2026-06-21T09:25:31.849Z] /complete merge OK in 2.5s; final=/Users/edrlu/Documents/Cerebra/regen/job_1782032264681_3eghgo/final.mp4

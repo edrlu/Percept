@@ -1,0 +1,71 @@
+import { NextResponse } from "next/server";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { dataDir, fileExists } from "@/app/lib/regen";
+
+export const runtime = "nodejs";
+// Scoring runs up to 3 TRIBE inferences; a cold GPU can take minutes. Mirror the
+// predict gateway's long budget so the UI waits instead of timing out.
+export const maxDuration = 14400;
+
+const VARIANT_COUNT = 3;
+
+/**
+ * POST /api/regenerate/score — score a run's 3 takes against the original.
+ * Body: { runId, referenceId }. Reads data/<runId>/take_<n>.mp4, forwards them
+ * to the worker /score_takes (which reuses the original's saved baseline), and
+ * caches the result so reopening the picker is instant.
+ */
+export async function POST(request: Request) {
+  const workerUrl = process.env.TRIBEV2_API_URL;
+  if (!workerUrl) {
+    return NextResponse.json(
+      { error: "No TRIBE v2 worker configured. Set TRIBEV2_API_URL to enable scoring." },
+      { status: 503 },
+    );
+  }
+
+  let body: { runId?: string; referenceId?: string };
+  try { body = await request.json(); }
+  catch { return NextResponse.json({ error: "Expected JSON { runId, referenceId }" }, { status: 400 }); }
+  const { runId, referenceId } = body;
+  if (!runId || !referenceId) {
+    return NextResponse.json({ error: "Missing runId or referenceId" }, { status: 400 });
+  }
+
+  const ddir = dataDir(runId);
+  const scoresFile = path.join(ddir, "scores.json");
+  if (await fileExists(scoresFile)) {
+    try { return NextResponse.json(JSON.parse(await readFile(scoresFile, "utf8"))); }
+    catch { /* unreadable cache: recompute */ }
+  }
+
+  const form = new FormData();
+  form.append("referenceId", referenceId);
+  let count = 0;
+  for (let n = 1; n <= VARIANT_COUNT; n++) {
+    const p = path.join(ddir, `take_${n}.mp4`);
+    if (!(await fileExists(p))) continue;
+    const bytes = await readFile(p);
+    form.append("takes", new Blob([bytes], { type: "video/mp4" }), `take_${n}.mp4`);
+    count++;
+  }
+  if (count === 0) return NextResponse.json({ error: "No takes found for this run" }, { status: 404 });
+
+  try {
+    const upstream = await fetch(`${workerUrl.replace(/\/$/, "")}/score_takes`, {
+      method: "POST",
+      body: form,
+      signal: AbortSignal.timeout(14_400_000),
+    });
+    const raw = await upstream.text();
+    let data: unknown;
+    try { data = JSON.parse(raw); } catch { data = { error: raw || "Scoring worker returned a non-JSON response" }; }
+    if (!upstream.ok) return NextResponse.json(data, { status: upstream.status });
+    try { await writeFile(scoresFile, JSON.stringify(data)); } catch { /* best-effort cache */ }
+    return NextResponse.json(data);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Scoring worker unavailable";
+    return NextResponse.json({ error: message }, { status: 502 });
+  }
+}

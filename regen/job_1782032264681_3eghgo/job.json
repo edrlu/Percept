@@ -1,0 +1,16 @@
+{
+  "id": "job_1782032264681_3eghgo",
+  "status": "done",
+  "stage": "complete",
+  "startSec": 0,
+  "endSec": 5,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782032254519_o618ob",
+  "frameId": "frames_1782032263094_on8020",
+  "provider": "seedance",
+  "agent": "codex",
+  "label": "0:00–0:05",
+  "createdAt": "2026-06-21T08:57:44.728Z",
+  "updatedAt": "2026-06-21T09:25:31.848Z"
+}

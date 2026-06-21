@@ -19,7 +19,7 @@ export async function startRegenWorker() {
   const { spawnSync, spawn } = await import("node:child_process");
   const { writeFile, readFile } = await import("node:fs/promises");
   const path = await import("node:path");
-  const { openSync } = await import("node:fs");
+  const { openSync, statSync } = await import("node:fs");
 
   const ROOT = process.cwd();
   const PID_FILE = path.join(ROOT, ".regen-worker.pid");
@@ -32,13 +32,27 @@ export async function startRegenWorker() {
     try { process.kill(pid, 0); return true; } catch { return false; }
   };
 
+  // Code-version stamp: the worker is a detached, long-lived process that
+  // survives dev reloads, so without this an edit to regen-worker.mjs would
+  // never reach the running worker (it keeps the old code until manually
+  // killed). Stamping the script's mtime in the pid file lets us detect a stale
+  // worker and replace it on the next reload.
+  let workerStamp = 0;
+  try { workerStamp = Math.floor(statSync(WORKER).mtimeMs); } catch { /* worker file missing — handled below */ }
+
   // Dev restarts re-run register() in a fresh process; the previous detached
-  // worker survives. Skip spawning if the recorded worker is still alive so we
-  // don't accumulate orphans (and don't end up with two workers racing claims).
+  // worker survives. Keep it ONLY if it's still alive AND running the current
+  // worker code. If it's stale (script changed since it launched), kill it so we
+  // replace it with the new code. Either way we never run two workers at once.
   try {
-    const prev = Number((await readFile(PID_FILE, "utf8")).trim());
-    if (prev && isAlive(prev)) { log(`worker already running (pid ${prev})`); return; }
-  } catch { /* no/stale pid file — fall through and start one */ }
+    const raw = (await readFile(PID_FILE, "utf8")).trim();
+    const prev = raw.startsWith("{") ? JSON.parse(raw) : { pid: Number(raw), stamp: 0 };
+    if (prev.pid && isAlive(prev.pid)) {
+      if (prev.stamp === workerStamp) { log(`worker already running (pid ${prev.pid}, current code)`); return; }
+      log(`worker pid ${prev.pid} is running stale code (mtime ${prev.stamp} → ${workerStamp}); restarting it`);
+      try { process.kill(prev.pid); } catch { /* already gone */ }
+    }
+  } catch { /* no/invalid pid file — fall through and start one */ }
 
   // Resolve which agent CLIs are usable, mirroring run.sh: a global binary, or
   // `npx --no-install <bin>` for a local/cached install (no surprise downloads).
@@ -77,6 +91,6 @@ export async function startRegenWorker() {
     detached: true,
   });
   child.unref();
-  if (child.pid) await writeFile(PID_FILE, String(child.pid));
+  if (child.pid) await writeFile(PID_FILE, JSON.stringify({ pid: child.pid, stamp: workerStamp }));
   log(`started clip-regeneration worker (pid ${child.pid}, agents: ${resolved.join(",")}, log: ${path.relative(ROOT, LOG)})`);
 }

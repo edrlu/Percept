@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
-import { writeFile } from "node:fs/promises";
+import { copyFile, mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { appendJobLog, jobDir, mergeReplace, readJob, readJobLogTail, sourceDir, writeJob } from "@/app/lib/regen";
+import { appendJobLog, dataDir, jobDir, mergeReplace, readJob, readJobLogTail, sourceDir, writeJob } from "@/app/lib/regen";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -32,6 +32,21 @@ export async function POST(request: Request) {
   await writeFile(clipPath, bytes);
   console.log(`[regen-api ${new Date().toISOString()}] /complete ${jobId} · received clip ${bytes.length}B · merging [${job.startSec.toFixed(2)}s, ${job.endSec.toFixed(2)}s]`);
   await appendJobLog(jobId, `/complete received clip=${bytes.length}B; merging replace=[${job.startSec.toFixed(3)}, ${job.endSec.toFixed(3)}]`);
+
+  // Archive this take's generated clip alongside the run's floor clip. The take
+  // mp4 is what /api/regenerate/score later sends to the TRIBE worker. Scoring is
+  // no longer done here: it runs once per run after all takes finish generating.
+  if (job.runId) {
+    try {
+      const ddir = dataDir(job.runId);
+      await mkdir(ddir, { recursive: true });
+      const take = `take_${(job.takeIndex ?? 0) + 1}`;
+      await copyFile(clipPath, path.join(ddir, `${take}.mp4`));
+      await appendJobLog(jobId, `archived generated take → data/${job.runId}/${take}.mp4`);
+    } catch (err) {
+      await appendJobLog(jobId, `WARN: could not archive take to data/${job.runId}: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
 
   await writeJob({ ...job, status: "merging", stage: "merge" });
   try {

@@ -1,8 +1,7 @@
 import { NextResponse } from "next/server";
-import { copyFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { appendJobLog, extractFrame, jobDir, probe, readJob, readJobLogTail, sourceDir, writeJob, type RegenJob } from "@/app/lib/regen";
-import { REGEN_META_PROMPT } from "@/app/lib/regenPrompt";
+import { appendJobLog, dataDir, extractFramePair, extractSegment, fileExists, FRAME_TAIL_SAFETY_SECONDS, jobDir, probe, readJob, readJobLogTail, sourceDir, writeJob, type RegenJob } from "@/app/lib/regen";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -63,8 +62,13 @@ export async function POST(request: Request) {
     const dir = path.join(sourceDir(sourceId), "frames");
     try {
       const meta = await probe(source);
-      await extractFrame(source, Math.max(0, startSec), path.join(dir, `${id}_start.png`));
-      await extractFrame(source, Math.max(0, Math.min(Math.max(0, meta.duration - 0.05), endSec)), path.join(dir, `${id}_end.png`));
+      const start = Math.max(0, startSec);
+      const lastDecodableTime = Math.max(0, meta.duration - FRAME_TAIL_SAFETY_SECONDS);
+      const end = Math.max(0, Math.min(lastDecodableTime, endSec));
+      if (end <= start) {
+        return NextResponse.json({ error: "This splice reaches beyond the last decodable video frame. Move it left and try again." }, { status: 422 });
+      }
+      await extractFramePair(source, start, end, dir, id);
       rlog(`frames ${id} extracted from ${sourceId} · start=${startSec.toFixed(2)}s end=${endSec.toFixed(2)}s`);
       return NextResponse.json({ frameId: id, startFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=start`, endFrame: `/api/regenerate/file?source=${sourceId}&frame=${id}&edge=end` });
     } catch (error) {
@@ -78,6 +82,11 @@ export async function POST(request: Request) {
   if (!frameId) return NextResponse.json({ error: "Missing prepared frames" }, { status: 400 });
   const provider: RegenJob["provider"] = form.get("provider") === "kling" ? "kling" : "seedance";
   const agent: RegenJob["agent"] = form.get("agent") === "claude" ? "claude" : "codex";
+  // A regeneration run is a batch of takes on one segment; the client stamps every
+  // take with a shared runId so they archive into the same data/<runId>/ folder.
+  const runId = (form.get("runId") as string) || undefined;
+  const takeIndexRaw = Number(form.get("takeIndex"));
+  const takeIndex = Number.isInteger(takeIndexRaw) && takeIndexRaw >= 0 ? takeIndexRaw : undefined;
 
   // Fail fast: if the chosen agent's CLI isn't installed on the server, reject now
   // with a clear error instead of queuing a job the worker can never pick up (which
@@ -102,8 +111,30 @@ export async function POST(request: Request) {
   try {
     const meta = await probe(source);
     const frames = path.join(sourceDir(sourceId), "frames");
-    await copyFile(path.join(frames, `${frameId}_start.png`), path.join(dir, "frame_start.png"));
-    await copyFile(path.join(frames, `${frameId}_end.png`), path.join(dir, "frame_end.png"));
+    const startFrame = path.join(frames, `${frameId}_start.png`);
+    const endFrame = path.join(frames, `${frameId}_end.png`);
+    if (!(await fileExists(startFrame)) || !(await fileExists(endFrame))) {
+      throw new Error("Splice boundaries are incomplete. Reposition or redraw the splice so Cerebra can prepare a new start/end frame pair.");
+    }
+    await Promise.all([
+      copyFile(startFrame, path.join(dir, "frame_start.png")),
+      copyFile(endFrame, path.join(dir, "frame_end.png")),
+    ]);
+
+    // Archive the floor clip (the original segment this run will splice out) once
+    // per run. Every take shares the runId, so guard on the file existing and use
+    // a temp+rename so the concurrent takes can't tear each other's write.
+    if (runId) {
+      const ddir = dataDir(runId);
+      await mkdir(ddir, { recursive: true });
+      const floor = path.join(ddir, "floor.mp4");
+      if (!(await fileExists(floor))) {
+        const tmp = path.join(ddir, `.floor.${process.pid}.${Math.random().toString(36).slice(2, 7)}.tmp.mp4`);
+        await extractSegment(source, startSec, endSec, tmp, { jobId: id, label: "extract-floor" });
+        await rename(tmp, floor);
+        rlog(`floor clip archived → data/${runId}/floor.mp4 [${startSec.toFixed(2)}s, ${endSec.toFixed(2)}s]`);
+      }
+    }
 
     const job: RegenJob = {
       id,
@@ -117,6 +148,8 @@ export async function POST(request: Request) {
       frameId,
       provider,
       agent,
+      runId,
+      takeIndex,
       label,
       createdAt: new Date().toISOString(),
     };
@@ -129,7 +162,6 @@ export async function POST(request: Request) {
       startFrame: `/api/regenerate/file?job=${id}&name=frame_start.png`,
       endFrame: `/api/regenerate/file?job=${id}&name=frame_end.png`,
       durationSec: job.durationSec,
-      metaPrompt: REGEN_META_PROMPT,
       job,
     });
   } catch (error) {

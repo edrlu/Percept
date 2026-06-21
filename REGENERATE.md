@@ -30,9 +30,9 @@ the worker isn't running (e.g. `codex` isn't installed).
 [codex]    (agent, via MCP — auto-run by worker/regen-worker.mjs)
            status → "generating"; append regen/<id>/agent.log
            1. read regen/<id>/frame_start.png + frame_end.png
-           2. run the prompt-engineer meta-prompt (app/lib/regenPrompt.ts) on the
-              two frames → produce `prompt` + `negative_prompt` (Kling uses both;
-              Seedance ignores the negative_prompt)
+           2. run this take's prompt-engineer meta-prompt (vidgenmd/take_<N>.md,
+              chosen by job.takeIndex) on the two frames → produce `prompt` +
+              `negative_prompt` (Kling uses both; Seedance ignores the negative_prompt)
            3. mcp__pika__generate_video (see params below) → download result → clip.mp4
            4. POST /api/regenerate/complete (jobId + clip.mp4)
    │
@@ -113,7 +113,8 @@ stays put ("slot kept in place").
 
 - `worker/regen-worker.mjs` — poller that auto-runs the agent step (headless `codex exec`).
 - `app/lib/regen.ts` — ffprobe/extractFrame/mergeReplace (local ffmpeg).
-- `app/lib/regenPrompt.ts` — the prompt-engineer meta-prompt (step 1).
+- `vidgenmd/take_1.md`, `take_2.md`, `take_3.md` — the per-take prompt-engineer
+  meta-prompts (step 1); the worker picks one by `job.takeIndex`.
 - `app/api/regenerate/route.ts` — create job + extract frames; GET poll.
 - `app/api/regenerate/complete/route.ts` — receive clip, merge, mark done.
 - `app/api/regenerate/file/route.ts` — serve frames / download final.

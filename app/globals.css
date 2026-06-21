@@ -575,3 +575,49 @@ footer span:first-child { max-width:660px; }
   .studio-shell .rag-node { min-width:176px; }
   .studio-shell .rag-conn { flex-basis:18px; }
 }
+
+/* ── Regen take picker — N AI takes scored vs the original; pick one to splice in.
+   Styled to the percept token system (replaces main's --accent/--surface-2 vars). ── */
+.variant-modal { background:var(--surface-raised); border:1px solid var(--line-strong); border-radius:16px; width:min(880px,94vw); max-height:88vh; overflow:auto; padding:22px 24px; box-shadow:0 30px 80px var(--overlay); animation:menu-in .18s var(--ease-out); }
+.variant-head-right { display:flex; align-items:center; gap:12px; }
+.variant-avg { font:500 11px var(--font-mono); color:var(--ink-faint); white-space:nowrap; }
+.variant-sub { margin:4px 0 16px; color:var(--muted); font:400 12.5px/1.55 var(--font-sans); }
+.variant-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:12px; }
+.variant-card { display:flex; flex-direction:column; gap:9px; padding:11px; border:1px solid var(--line); border-radius:12px; background:var(--surface); }
+.variant-card.done { border-color:var(--line-strong); }
+.variant-card.error { border-color:color-mix(in srgb,var(--danger) 45%,var(--line)); }
+.variant-card.best { border-color:var(--live-line); box-shadow:0 0 0 1px var(--live-line); }
+.variant-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; font:500 12px var(--font-sans); }
+.variant-best { color:var(--live-text); font:600 9.5px var(--font-mono); letter-spacing:.4px; }
+.variant-labels { display:inline-flex; align-items:baseline; gap:8px; }
+.variant-score { font:600 14px var(--font-mono); color:var(--ink); }
+.variant-head em { font-style:normal; font:500 10px var(--font-mono); color:var(--muted); }
+.variant-head em.ok { color:var(--live-text); }
+.variant-head em.bad { color:var(--danger-text); }
+.variant-video { width:100%; aspect-ratio:16/9; object-fit:cover; border-radius:8px; background:#000; }
+.variant-pending { display:flex; align-items:center; justify-content:center; gap:8px; aspect-ratio:16/9; border-radius:8px; background:var(--stage); color:var(--muted); font:500 11px var(--font-mono); }
+.variant-error { color:var(--danger-text); font:400 11px/1.4 var(--font-sans); padding:0 8px; text-align:center; }
+.variant-factors { display:flex; gap:6px; flex-wrap:wrap; }
+.variant-factor { display:inline-flex; align-items:baseline; gap:4px; font:500 11px var(--font-mono); padding:2px 7px; border-radius:6px; background:var(--surface-hover); color:var(--ink); }
+.variant-factor i { font-style:normal; font-size:9px; letter-spacing:.4px; color:var(--ink-faint); }
+.variant-use { margin-top:auto; border:1px solid var(--line-strong); background:var(--ink); color:var(--canvas); padding:8px; border-radius:8px; font:600 11.5px var(--font-sans); }
+.variant-use:hover:not(:disabled) { filter:brightness(.92); }
+.variant-use:disabled { opacity:.4; cursor:not-allowed; background:transparent; color:var(--muted); }
+.variant-foot { display:flex; justify-content:flex-end; margin-top:14px; }
+.variant-reject { background:transparent; border:1px solid var(--line-strong); color:var(--muted); padding:8px 13px; border-radius:8px; font:500 11.5px var(--font-sans); }
+.variant-reject:hover { color:var(--ink); border-color:var(--line-strong); background:var(--surface-hover); }
+
+/* ── Lift points — highest-upside moments on the net ribbon (amber = inferno hot data hue) ── */
+.lift-points-button { border:1px solid var(--line-strong); background:var(--control-bg); color:var(--muted); padding:7px 12px; border-radius:8px; font:500 10px var(--font-mono); letter-spacing:.3px; }
+.lift-points-button:hover { color:var(--ink); background:var(--control-hover); }
+.lift-points-button.selected { color:var(--ink); background:var(--surface-hover); border-color:var(--line-strong); }
+.timeline-graph.showing-lift-points .chart-grid { opacity:.4; }
+.lift-point-lines path { stroke:var(--stage-hot); stroke-width:3.5; filter:drop-shadow(0 0 5px var(--stage-hot-glow)); }
+
+/* ── Segments: regenerate-all + batch-ready state ── */
+.deck-seg-actions { display:flex; align-items:center; gap:8px; }
+.segments-regen-all { border:1px solid var(--line-strong); background:var(--control-bg); color:var(--ink); padding:4px 9px; border-radius:7px; font:500 9px var(--font-mono); letter-spacing:.2px; }
+.segments-regen-all:hover { background:var(--control-hover); }
+.segment-regen.ready { border-color:var(--live-line); background:var(--live-bg); color:var(--live-text); }
+.segment-regen.ready:hover { background:color-mix(in srgb,var(--lime) 16%,var(--live-bg)); }
+.segment-card.ready { border-color:var(--live-line); }

@@ -15,6 +15,7 @@ type Analysis = {
   peak: { time: number; label: string; value: number };
   source: "demo" | "model";
   cognitiveSeries?: Record<string, number[]>;
+  referenceId?: string; // sha256 of the scored original; lets takes be scored against it
 };
 
 // Cortical surface proxy regions, in the worker's family order. These are
@@ -32,14 +33,26 @@ const FILMSTRIP_FRAME_COUNT = 24;
 type LogStatus = "active" | "done" | "error" | "note";
 type LogEntry = { id: string; ts: number; title: string; detail?: string; status: LogStatus; bar?: boolean; href?: string; linkLabel?: string };
 type RegenStatus = "extracting" | "awaiting_generation" | "generating" | "merging" | "done" | "error";
-type RegenJobState = { status: RegenStatus; jobId?: string; startFrame?: string; endFrame?: string; downloadUrl?: string; logUrl?: string; logTail?: string; error?: string; startedAt?: number };
+// Each Regenerate fans out into VARIANT_COUNT independent jobs for the SAME slot
+// — three agent → Pika calls in parallel — so the user gets several takes to
+// choose from. A segment's state is the list of those variant jobs.
+type Factors = { AUD: number; LANG: number; ATTN: number; VIS: number };
+type TakeSeries = { global: number[]; AUD: number[]; LANG: number[]; ATTN: number[]; VIS: number[] };
+type RegenVariant = { jobId?: string; status: RegenStatus; clipUrl?: string; downloadUrl?: string; logUrl?: string; logTail?: string; error?: string; startedAt?: number; score?: number; factors?: Factors; series?: TakeSeries };
+type RegenJobState = { variants: RegenVariant[]; runId?: string; scoring?: boolean; scored?: boolean; best?: number; average?: number };
 type Cut = { start: number; end: number; frameId?: string; preparing?: boolean; frameRequested?: boolean; frameError?: string };
+const VARIANT_COUNT = 3;
+// Leave the final video tail alone. Container duration metadata can include a
+// fraction of a second after the last frame FFmpeg is able to extract.
+const FRAME_TAIL_SAFETY_SECONDS = 0.25;
+const IN_FLIGHT_STATUSES: RegenStatus[] = ["extracting", "awaiting_generation", "generating", "merging"];
+const isInFlight = (s?: RegenStatus) => !!s && IN_FLIGHT_STATUSES.includes(s);
 const REGEN_LABEL: Record<RegenStatus, string> = {
   extracting: "Extracting frames…",
   awaiting_generation: "Queued · starting agent…",
   generating: "Waiting on Pika…",
   merging: "Pika returned · merging clip…",
-  done: "Regenerated",
+  done: "Ready",
   error: "Failed",
 };
 
@@ -107,6 +120,26 @@ function createDemoForFile(file: File, scheme: ColorSchemeId): Analysis {
   ], duration, "demo", scheme);
 }
 
+const FAMILY_KEY_BY_SHORT: Record<string, string> = {
+  AUD: "auditory_engagement",
+  LANG: "language_message",
+  ATTN: "attention_salience",
+  VIS: "visual_motion",
+};
+
+// Linearly resample a per-frame series to exactly n points (the take is ~5
+// samples at 1 Hz; the graph segment may have a different frame count).
+function resampleTo(series: number[], n: number): number[] {
+  if (n <= 0) return [];
+  if (series.length === 0) return new Array(n).fill(0);
+  if (series.length === 1) return new Array(n).fill(series[0]);
+  return Array.from({ length: n }, (_, k) => {
+    const pos = n === 1 ? 0 : (k / (n - 1)) * (series.length - 1);
+    const lo = Math.floor(pos), hi = Math.ceil(pos), frac = pos - lo;
+    return series[lo] * (1 - frac) + series[hi] * frac;
+  });
+}
+
 function engagementScore(a: Analysis): number {
   // Mean of each system's average over the clip (mean of averages), so the hero
   // number tracks sustained engagement rather than each system's single best moment.
@@ -140,9 +173,57 @@ function linePath(values: number[], width: number, height: number, min = 0, max 
   }).join(" ");
 }
 
+function lineSegmentPath(values: number[], startIndex: number, endIndex: number, width: number, height: number, min = 0, max = 100) {
+  return values.slice(startIndex, endIndex + 1).map((value, offset) => {
+    const x = ((startIndex + offset) / (values.length - 1)) * width;
+    const y = height - ((value - min) / (max - min)) * height;
+    return `${offset === 0 ? "M" : "L"}${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+}
+
 function formatTime(seconds: number) {
   const minutes = Math.floor(seconds / 60);
   return `${minutes}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
+}
+
+type LiftPoint = { startIndex: number; endIndex: number; score: number };
+
+// Find the moments with the most useful headroom. A low value alone is not
+// enough: the score also looks for a local dip and evidence that the curve can
+// recover afterwards. That makes this an edit-priority signal rather than a
+// "circle every low pixel" signal.
+function findLiftPoints(values: number[]): LiftPoint[] {
+  if (values.length < 7) return [];
+  const floor = Math.min(...values);
+  const ceiling = Math.max(...values);
+  const range = Math.max(ceiling - floor, 1);
+  const average = (from: number, to: number) => {
+    let total = 0;
+    for (let index = from; index <= to; index += 1) total += values[index];
+    return total / (to - from + 1);
+  };
+  const candidates = values.slice(2, -2).map((value, offset) => {
+    const index = offset + 2;
+    const nearby = average(Math.max(0, index - 3), Math.min(values.length - 1, index + 3));
+    const ahead = average(index, Math.min(values.length - 1, index + 4));
+    const headroom = (ceiling - value) / range;
+    const localDip = Math.max(0, nearby - value) / range;
+    const recoverability = Math.max(0, ahead - value) / range;
+    return { index, score: headroom * 0.45 + localDip * 0.3 + recoverability * 0.25 };
+  }).sort((a, b) => b.score - a.score);
+
+  const selected: LiftPoint[] = [];
+  for (const candidate of candidates) {
+    // Keep recommendations distinct; adjacent frames represent the same edit.
+    if (selected.some((point) => Math.abs(candidate.index - ((point.startIndex + point.endIndex) / 2)) < 8)) continue;
+    selected.push({
+      startIndex: Math.max(0, candidate.index - 3),
+      endIndex: Math.min(values.length - 1, candidate.index + 3),
+      score: Math.round(candidate.score * 100),
+    });
+    if (selected.length === 3) break;
+  }
+  return selected.sort((a, b) => a.startIndex - b.startIndex);
 }
 
 // A self-contained preview that plays only the [start, end] window of the
@@ -185,6 +266,8 @@ export default function Home() {
   const [timelineMode, setTimelineMode] = useState<"net" | "split">("net");
   // The activity feed lives in a drawer so the brain stays the hero.
   const [activityOpen, setActivityOpen] = useState(false);
+  // Highlight the highest-upside moments on the net ribbon (from main's lift-points).
+  const [showLiftPoints, setShowLiftPoints] = useState(false);
   // Two-tab flow: Create (Studio) → Refine. Measuring how the brain responds and
   // cutting/regenerating the weak moments now happen together in Refine, in front
   // of the living brain — there is no separate "Measure" place anymore.
@@ -198,12 +281,16 @@ export default function Home() {
   const [draftCut, setDraftCut] = useState<{ start: number; end: number } | null>(null);
   const [videoDuration, setVideoDuration] = useState(0);
   const [regenJobs, setRegenJobs] = useState<Record<string, RegenJobState>>({});
+  // Segment key whose "choose a variation" popup is open, plus a guard so we
+  // auto-open it only once per batch (reopening after the user closes it is rude).
+  const [variantPicker, setVariantPicker] = useState<string | null>(null);
+  const autoOpenedRef = useRef<Set<string>>(new Set());
   // Ticks once a second while any regen job is in flight so the segment card's
   // elapsed timer advances live — visible proof we're actively waiting on Pika,
   // not frozen.
   const [regenNow, setRegenNow] = useState(0);
   useEffect(() => {
-    const anyActive = Object.values(regenJobs).some((v) => v.startedAt && (v.status === "extracting" || v.status === "awaiting_generation" || v.status === "generating" || v.status === "merging"));
+    const anyActive = Object.values(regenJobs).some((st) => st.variants.some((v) => v.startedAt && isInFlight(v.status)));
     if (!anyActive) return;
     setRegenNow(Date.now());
     const id = setInterval(() => setRegenNow(Date.now()), 1000);
@@ -362,13 +449,20 @@ export default function Home() {
 
   // Cuts snap to a fixed 5s or 10s slot, so the generated clip (produced at the
   // slot's exact length) drops back in without changing total length.
+  function spliceEndLimit() {
+    if (videoDuration > FRAME_TAIL_SAFETY_SECONDS) {
+      return analysis.duration * ((videoDuration - FRAME_TAIL_SAFETY_SECONDS) / videoDuration);
+    }
+    return Math.max(0, analysis.duration - FRAME_TAIL_SAFETY_SECONDS);
+  }
   function snapWindow(a: number, b: number) {
     const lo = Math.min(a, b), hi = Math.max(a, b);
     const rawLen = hi - lo;
-    const opts = [5, 10].filter((s) => s <= analysis.duration + 1e-6);
-    const target = opts.length ? opts.reduce((best, s) => (Math.abs(s - rawLen) < Math.abs(best - rawLen) ? s : best), opts[0]) : analysis.duration;
+    const limit = spliceEndLimit();
+    const opts = [5, 10].filter((s) => s <= limit + 1e-6);
+    const target = opts.length ? opts.reduce((best, s) => (Math.abs(s - rawLen) < Math.abs(best - rawLen) ? s : best), opts[0]) : limit;
     let start = lo, end = lo + target;
-    if (end > analysis.duration) { end = analysis.duration; start = Math.max(0, end - target); }
+    if (end > limit) { end = limit; start = Math.max(0, end - target); }
     return { start, end };
   }
 
@@ -485,7 +579,7 @@ export default function Home() {
     event.stopPropagation();
     if (Math.abs(event.clientX - m.pointerX) > 3) m.moved = true;
     const deltaSec = ((event.clientX - m.pointerX) / m.width) * analysis.duration;
-    const start = Math.max(0, Math.min(analysis.duration - m.len, m.origStart + deltaSec));
+    const start = Math.max(0, Math.min(spliceEndLimit() - m.len, m.origStart + deltaSec));
     const end = start + m.len;
     // Block sliding into another cut — stop at the neighbour's edge instead.
     if (cuts.some((c, i) => i !== m.index && start < c.end - 1e-3 && end > c.start + 1e-3)) return;
@@ -512,6 +606,17 @@ export default function Home() {
   // Step 1 of regeneration: ship the source + cut timing to the backend, which
   // extracts the slot's start/end frames and queues a job. The agent then runs
   // the Codex prompt → Pika generate_video → /complete merge out-of-band.
+  // Patch a single variant's state without disturbing its siblings.
+  const updateVariant = useCallback((key: string, i: number, patch: Partial<RegenVariant>) => {
+    setRegenJobs((prev) => {
+      const cur = prev[key];
+      if (!cur) return prev;
+      const variants = cur.variants.slice();
+      variants[i] = { ...variants[i], ...patch };
+      return { ...prev, [key]: { ...cur, variants } };
+    });
+  }, []);
+
   async function regenerate(seg: Cut) {
     const key = `${seg.start}-${seg.end}`;
     const slot = `${formatTime(seg.start)}–${formatTime(seg.end)}`;
@@ -524,46 +629,164 @@ export default function Home() {
       logUpsert(logId, { title: `Regenerate ${slot}`, detail: seg.frameError || "Splice frames were not prepared. Remove and redraw this splice.", status: "error" });
       return;
     }
+    const frameId = seg.frameId;
     const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1;
     const durationSec = seg.end - seg.start > 7.5 ? 10 : 5;
-    setRegenJobs((j) => ({ ...j, [key]: { status: "extracting" } }));
-    logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Frames ready · queuing generation", status: "active", bar: true });
+    const modelName = REGEN_PROVIDERS.find((p) => p.id === genModel)?.name ?? genModel;
+    const agentName = genAgent === "claude" ? "Claude" : "Codex";
+    // One timestamped run id shared by every take in this batch, so the floor clip
+    // and all VARIANT_COUNT generated takes archive into the same data/<runId>/.
+    const runId = new Date().toISOString().replace(/[:.]/g, "-");
+    // Fresh batch: clear any prior picker auto-open guard and seed N pending variants.
+    autoOpenedRef.current.delete(key);
+    setRegenJobs((j) => ({ ...j, [key]: { variants: Array.from({ length: VARIANT_COUNT }, () => ({ status: "extracting" as RegenStatus })), runId } }));
+    // One activity-feed row PER take (regen_<key>_t<i>) so all VARIANT_COUNT
+    // show up side by side in ASK CEREBRA, not collapsed into a single line.
+    for (let i = 0; i < VARIANT_COUNT; i++) {
+      logUpsert(`${logId}_t${i}`, { title: `Regenerate ${slot} · take ${i + 1}`, detail: `Queuing for ${agentName} → Pika (${modelName})…`, status: "active", bar: true });
+    }
+
+    // Fire all VARIANT_COUNT jobs at once — same slot, independent jobs. The
+    // worker (concurrency ${VARIANT_COUNT}) claims them together, so we get
+    // ${VARIANT_COUNT} parallel agent → Pika calls and ${VARIANT_COUNT} clips.
+    await Promise.all(Array.from({ length: VARIANT_COUNT }, async (_unused, i) => {
+      try {
+        const body = new FormData();
+        body.append("action", "job"); body.append("sourceId", sourceId); body.append("frameId", frameId);
+        body.append("startSec", String(seg.start * factor));
+        body.append("endSec", String(seg.end * factor));
+        body.append("durationSec", String(durationSec));
+        body.append("provider", genModel);
+        body.append("agent", genAgent);
+        body.append("runId", runId);
+        body.append("takeIndex", String(i));
+        body.append("label", `${slot} · take ${i + 1}`);
+        const response = await fetch("/api/regenerate", { method: "POST", body });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "Generation setup failed");
+        updateVariant(key, i, { status: "awaiting_generation", startedAt: Date.now(), jobId: data.jobId, logUrl: data.jobId ? `/api/regenerate/file?job=${data.jobId}&name=job.log` : undefined });
+        logUpsert(`${logId}_t${i}`, { title: `Regenerate ${slot} · take ${i + 1}`, detail: `Queued for ${agentName} → Pika (${modelName}). Generating…`, status: "active", bar: true });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Failed";
+        updateVariant(key, i, { status: "error", error: message });
+        logUpsert(`${logId}_t${i}`, { title: `Regenerate ${slot} · take ${i + 1}`, detail: message, status: "error" });
+      }
+    }));
+  }
+
+  // Replace [start,end] of the engagement graph with the chosen take's per-frame
+  // series (already z-scored vs the original, so it drops in on the same scale).
+  // Updates global, each region's values + mean score, and cognitiveSeries; the
+  // overall engagementScore() useMemo recomputes from the new analysis.
+  function spliceTakeIntoAnalysis(series: TakeSeries, start: number, end: number) {
+    setAnalysis((a) => {
+      const len = a.global.length;
+      if (!len || !a.duration) return a;
+      const i0 = Math.max(0, Math.round((start / a.duration) * (len - 1)));
+      const i1 = Math.min(len - 1, Math.round((end / a.duration) * (len - 1)));
+      const n = i1 - i0 + 1;
+      if (n <= 0) return a;
+      const spliceInto = (orig: number[], take: number[]) => {
+        const next = orig.slice();
+        const rs = resampleTo(take, n);
+        for (let k = 0; k < n; k++) next[i0 + k] = rs[k];
+        return next;
+      };
+      const global = spliceInto(a.global, series.global);
+      const cognitiveSeries: Record<string, number[]> = { ...(a.cognitiveSeries ?? {}) };
+      const regions = a.regions.map((r) => {
+        const takeVals = series[r.short as keyof TakeSeries];
+        if (!Array.isArray(takeVals)) return r;
+        const values = spliceInto(r.values, takeVals);
+        const fk = FAMILY_KEY_BY_SHORT[r.short];
+        if (fk) cognitiveSeries[fk] = values;
+        const score = Math.round((values.reduce((s, x) => s + x, 0) / values.length) * 10) / 10;
+        return { ...r, values, score };
+      });
+      return { ...a, global, regions, cognitiveSeries };
+    });
+  }
+
+  // Adopt one chosen take: its final.mp4 is the full source with that take spliced
+  // in place, so we promote it to the active editor video and clear the batch.
+  async function chooseVariant(key: string, i: number) {
+    const v = regenJobs[key]?.variants[i];
+    if (!v?.downloadUrl) return;
+    const series = v.series;
+    const [start, end] = key.split("-").map(Number);
+    const slot = `${formatTime(start)}–${formatTime(end)}`;
+    setVariantPicker(null);
     try {
-      const body = new FormData();
-      body.append("action", "job"); body.append("sourceId", sourceId); body.append("frameId", seg.frameId);
-      body.append("startSec", String(seg.start * factor));
-      body.append("endSec", String(seg.end * factor));
-      body.append("durationSec", String(durationSec));
-      body.append("provider", genModel);
-      body.append("agent", genAgent);
-      body.append("label", slot);
-      const response = await fetch("/api/regenerate", { method: "POST", body });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Generation setup failed");
-      setRegenJobs((j) => ({ ...j, [key]: { status: "awaiting_generation", startedAt: Date.now(), jobId: data.jobId, startFrame: data.startFrame, endFrame: data.endFrame, logUrl: data.jobId ? `/api/regenerate/file?job=${data.jobId}&name=job.log` : undefined } }));
-      const modelName = REGEN_PROVIDERS.find((p) => p.id === genModel)?.name ?? genModel;
-      const agentName = genAgent === "claude" ? "Claude" : "Codex";
-      logUpsert(logId, { title: `Regenerate ${slot}`, detail: `Frames ready · queued for the ${agentName} agent → Pika (${modelName}). If it sticks here, the agent/worker isn't running.`, status: "active", bar: true });
+      await replacePreviewWithRegeneratedVideo(v.downloadUrl, { start, end }, key);
+      if (series) spliceTakeIntoAnalysis(series, start, end);
+      logUpsert(`regen_${key}_t${i}`, { title: `Regenerate ${slot} · take ${i + 1}`, detail: "Applied in place · graph updated · ready to play", status: "done", href: v.downloadUrl });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed";
-      setRegenJobs((j) => ({ ...j, [key]: { status: "error", error: message } }));
-      logUpsert(logId, { title: `Regenerate ${slot}`, detail: message, status: "error" });
+      logUpsert(`regen_${key}_t${i}`, { title: `Regenerate ${slot} · take ${i + 1}`, detail: error instanceof Error ? error.message : "Couldn't load the regenerated video", status: "error" });
     }
   }
 
-  // Poll queued jobs until the agent finishes the generation + merge.
+  // Discard all takes for a slot and keep the original untouched. The segment
+  // stays so the user can regenerate again.
+  function rejectAll(key: string) {
+    setVariantPicker(null);
+    autoOpenedRef.current.delete(key);
+    setRegenJobs((prev) => { const next = { ...prev }; delete next[key]; return next; });
+  }
+
+  // Once a batch finishes generating, score all takes against the ORIGINAL in one
+  // run-level pass, then reveal the picker with scores. No clip is shown without
+  // its score. If the original was never scored by the live model (demo fallback,
+  // no referenceId), open the picker unscored rather than blocking.
+  async function scoreBatch(key: string) {
+    const st = regenJobs[key];
+    const runId = st?.runId;
+    const referenceId = analysis.referenceId;
+    if (!runId || !referenceId) { setVariantPicker(key); return; }
+    setRegenJobs((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], scoring: true } } : prev));
+    setVariantPicker(key);
+    try {
+      const res = await fetch("/api/regenerate/score", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ runId, referenceId }),
+      });
+      if (!res.ok) {
+        const detail = await res.json().then((d) => d?.error).catch(() => null);
+        logUpsert(`regen_${key}_score`, { title: "Take scoring", detail: detail || "Scoring failed — showing takes without scores.", status: "note" });
+        throw new Error(detail || "scoring request failed");
+      }
+      const data: { best: number; average: number; takes: { takeIndex: number; score: number; factors: Factors; series: TakeSeries }[] } = await res.json();
+      setRegenJobs((prev) => {
+        const cur = prev[key];
+        if (!cur) return prev;
+        const variants = cur.variants.slice();
+        for (const t of data.takes) {
+          if (variants[t.takeIndex]) variants[t.takeIndex] = { ...variants[t.takeIndex], score: t.score, factors: t.factors, series: t.series };
+        }
+        return { ...prev, [key]: { ...cur, variants, scoring: false, scored: true, best: data.best, average: data.average } };
+      });
+    } catch {
+      setRegenJobs((prev) => (prev[key] ? { ...prev, [key]: { ...prev[key], scoring: false } } : prev));
+    }
+  }
+
+  // Poll every in-flight variant until its agent finishes generation + merge.
   useEffect(() => {
-    const active = Object.entries(regenJobs).filter(([, v]) => v.jobId && (v.status === "awaiting_generation" || v.status === "generating" || v.status === "merging"));
+    const active: { key: string; i: number; v: RegenVariant }[] = [];
+    for (const [key, st] of Object.entries(regenJobs)) {
+      st.variants.forEach((v, i) => { if (v.jobId && isInFlight(v.status)) active.push({ key, i, v }); });
+    }
     if (!active.length) return;
     const id = setInterval(async () => {
-      for (const [key, v] of active) {
-        // No silent waiting: if a queued job is never claimed by the worker,
-        // error out instead of spinning forever (covers a dead/missing regen
-        // worker even when the agent CLI is installed).
-        if (v.status === "awaiting_generation" && v.startedAt && Date.now() - v.startedAt > 45000) {
-          const slot = key.split("-").map((s) => formatTime(Number(s))).join("–");
-          setRegenJobs((prev) => ({ ...prev, [key]: { ...prev[key], status: "error", error: "The regen worker didn't pick this up within 45s. Is it running? (needs a claude/codex CLI on the server, then restart run.sh)" } }));
-          logUpsert(`regen_${key}`, { title: `Regenerate ${slot}`, detail: "Worker never claimed the job — is the regen worker running?", status: "error" });
+      for (const { key, i, v } of active) {
+        const slot = key.split("-").map((s) => formatTime(Number(s))).join("–");
+        const takeLog = `regen_${key}_t${i}`;
+        const takeTitle = `Regenerate ${slot} · take ${i + 1}`;
+        // No silent waiting: a queued job never claimed by the worker errors out
+        // instead of spinning forever (covers a dead/missing regen worker).
+        if (v.status === "awaiting_generation" && v.startedAt && Date.now() - v.startedAt > 60000) {
+          updateVariant(key, i, { status: "error", error: "The regen worker didn't pick this up within 60s — is it running? (needs a claude/codex CLI on the server)" });
+          logUpsert(takeLog, { title: takeTitle, detail: "Never claimed — is the regen worker running?", status: "error" });
           continue;
         }
         try {
@@ -571,40 +794,61 @@ export default function Home() {
           if (!response.ok) continue;
           const job = await response.json();
           if (job.status !== v.status || job.logTail !== v.logTail) {
-            const downloadUrl = `/api/regenerate/file?job=${v.jobId}&name=final.mp4`;
-            setRegenJobs((prev) => ({ ...prev, [key]: { ...prev[key], status: job.status, error: job.error, logTail: job.logTail, logUrl: job.logUrl,
-              downloadUrl: job.status === "done" ? downloadUrl : prev[key]?.downloadUrl } }));
-            const slot = key.split("-").map((s) => formatTime(Number(s))).join("–");
-            const logId = `regen_${key}`;
-            if (job.status === "generating") logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Agent picked up the job · generating with Pika", status: "active", bar: true });
-            else if (job.status === "merging") logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Clip generated · merging into the video", status: "active", bar: true });
-            else if (job.status === "done") {
-              try {
-                await replacePreviewWithRegeneratedVideo(downloadUrl, { start: Number(key.split("-")[0]), end: Number(key.split("-")[1]) }, key);
-                logUpsert(logId, { title: `Regenerate ${slot}`, detail: "Regenerated in place · ready to play", status: "done", href: downloadUrl });
-              } catch (error) {
-                const message = error instanceof Error ? error.message : "Couldn't load the regenerated video";
-                logUpsert(logId, { title: `Regenerate ${slot}`, detail: message, status: "error" });
-              }
-            }
-            else if (job.status === "error") logUpsert(logId, { title: `Regenerate ${slot}`, detail: `${job.error || "Regeneration failed"}${job.logUrl ? " · log saved" : ""}`, status: "error", href: job.logUrl, linkLabel: "View job log" });
+            updateVariant(key, i, {
+              status: job.status, error: job.error, logTail: job.logTail, logUrl: job.logUrl,
+              clipUrl: job.status === "done" ? `/api/regenerate/file?job=${v.jobId}&name=clip.mp4` : v.clipUrl,
+              downloadUrl: job.status === "done" ? `/api/regenerate/file?job=${v.jobId}&name=final.mp4` : v.downloadUrl,
+            });
+            if (job.status === "generating") logUpsert(takeLog, { title: takeTitle, detail: "Agent picked up · generating with Pika", status: "active", bar: true });
+            else if (job.status === "merging") logUpsert(takeLog, { title: takeTitle, detail: "Clip generated · merging into the video", status: "active", bar: true });
+            else if (job.status === "done") logUpsert(takeLog, { title: takeTitle, detail: "Ready to preview · pick this take or compare", status: "done" });
+            else if (job.status === "error") logUpsert(takeLog, { title: takeTitle, detail: `${job.error || "Generation failed"}${job.logUrl ? " · log saved" : ""}`, status: "error", href: job.logUrl, linkLabel: "View job log" });
           }
         } catch { /* keep polling */ }
       }
     }, 2500);
     return () => clearInterval(id);
-  }, [regenJobs, replacePreviewWithRegeneratedVideo]);
+  }, [regenJobs, updateVariant]);
+
+  // When a batch finishes (nothing in flight) with at least one good take, score
+  // it once (which opens the picker). The autoOpenedRef guard fires this once.
+  useEffect(() => {
+    for (const [key, st] of Object.entries(regenJobs)) {
+      const anyFlight = st.variants.some((v) => isInFlight(v.status));
+      const doneCount = st.variants.filter((v) => v.status === "done").length;
+      if (anyFlight || doneCount === 0 || autoOpenedRef.current.has(key)) continue;
+      autoOpenedRef.current.add(key);
+      void scoreBatch(key);
+    }
+  }, [regenJobs]);
 
   const totalCut = cuts.reduce((sum, c) => sum + (c.end - c.start), 0);
   const trimmedDuration = Math.max(0, analysis.duration - totalCut);
   // Sorted cuts = the segments-to-regenerate list, each previewable as a
   // temporal fragment of the source clip (#t=start,end), no re-export needed.
   const segments = useMemo(() => [...cuts].sort((a, b) => a.start - b.start), [cuts]);
+  // Fire every prepared, idle segment at once so the worker (which runs up to
+  // three jobs in parallel) generates them simultaneously instead of one click
+  // at a time. Each regenerate() POSTs its own job; we kick them off together
+  // rather than awaiting them in series.
+  const isSegmentBusy = (seg: Cut) => {
+    const st = regenJobs[`${seg.start}-${seg.end}`];
+    return Boolean(seg.preparing) || Boolean(st && st.variants.some((v) => isInFlight(v.status)));
+  };
+  // A segment whose batch finished and has takes waiting to be picked.
+  const isSegmentReady = (seg: Cut) => {
+    const st = regenJobs[`${seg.start}-${seg.end}`];
+    return Boolean(st && !st.variants.some((v) => isInFlight(v.status)) && st.variants.some((v) => v.status === "done"));
+  };
+  const isSegmentRegenerable = (seg: Cut) => Boolean(seg.frameId) && !isSegmentBusy(seg) && !isSegmentReady(seg);
+  const regenerableCount = segments.filter(isSegmentRegenerable).length;
+  const regenerateAll = () => { segments.filter(isSegmentRegenerable).forEach((seg) => { void regenerate(seg); }); };
   const cutLayer = (cuts.length > 0 || draftCut) ? <div className={`cut-layer ${spliceMode ? "armed" : ""}`} onPointerDown={onCutDown} onPointerMove={onCutMove} onPointerUp={onCutUp} onPointerCancel={onCutUp}>
     {cuts.map((c, i) => <span className={`cut-band ${spliceMode ? "draggable" : ""}`} key={i} title={spliceMode ? "Drag to move · click to remove" : undefined} onPointerDown={spliceMode ? (e) => onBandDown(e, i) : undefined} onPointerMove={spliceMode ? onBandMove : undefined} onPointerUp={spliceMode ? onBandUp : undefined} onPointerCancel={spliceMode ? onBandUp : undefined} style={{ left: `${(c.start / analysis.duration) * 100}%`, width: `${((c.end - c.start) / analysis.duration) * 100}%` }}/>) }
     {draftCut && <span className="cut-band draft" style={{ left: `${(draftCut.start / analysis.duration) * 100}%`, width: `${((draftCut.end - draftCut.start) / analysis.duration) * 100}%` }}/>}
   </div> : (spliceMode ? <div className="cut-layer armed" onPointerDown={onCutDown} onPointerMove={onCutMove} onPointerUp={onCutUp} onPointerCancel={onCutUp}/> : null);
 
+  const liftPoints = useMemo(() => findLiftPoints(analysis.global), [analysis.global]);
   const timelineSeries = useMemo(() => families.map((family) => ({
     ...family,
     values: analysis.cognitiveSeries?.[family.key] ?? Array.from({ length: analysis.frames }, () => 0),
@@ -729,36 +973,46 @@ export default function Home() {
           <span className="deck-time"><b className="tnum">{time.toFixed(1)}</b><small>s</small> <i>/ {formatTime(analysis.duration)}</i></span>
           {(spliceMode || cuts.length > 0) && <span className="deck-cuts">{cuts.length ? `${cuts.length} cut${cuts.length > 1 ? "s" : ""} · ${trimmedDuration.toFixed(1)}s left` : "Drag the ribbon to cut"}{cuts.length > 0 && <button className="splice-clear" onClick={() => setCuts([])}>Clear</button>}</span>}
           <span className="deck-spacer"/>
-          <div className="view-toggle" role="group" aria-label="Timeline view"><button className={timelineMode === "net" ? "selected" : ""} onClick={() => setTimelineMode("net")}>Net</button><button className={timelineMode === "split" ? "selected" : ""} onClick={() => setTimelineMode("split")}>Split</button></div>
+          <div className="view-toggle" role="group" aria-label="Timeline view"><button className={timelineMode === "net" ? "selected" : ""} onClick={() => setTimelineMode("net")}>Net</button><button className={timelineMode === "split" ? "selected" : ""} onClick={() => setTimelineMode("split")}>Split</button></div>{timelineMode === "net" && <button className={`lift-points-button ${showLiftPoints ? "selected" : ""}`} onClick={() => setShowLiftPoints((shown) => !shown)} aria-pressed={showLiftPoints} title="Highlight the moments with the greatest potential to lift engagement">{showLiftPoints ? "Clear lift points" : "Find lift points"}</button>}
           <button className={`splice-toggle ${spliceMode ? "selected" : ""}`} onClick={() => setSpliceMode((m) => !m)} disabled={!videoUrl || !sourceId} title={!videoUrl ? "Upload a video to splice" : sourceId ? "Mark portions to cut out" : "Preparing video for splicing"}>{spliceMode ? "Cutting…" : sourceId ? "Splice" : "Preparing…"}</button>
           {videoUrl && <button className="deck-clear" onClick={reset} title="Clear this clip and start over">Clear</button>}
         </div>
 
         <div className="deck-graph">
           {timelineMode === "net"
-            ? <div className="timeline-graph net-graph"><svg viewBox="0 0 700 96" preserveAspectRatio="none"><defs><linearGradient id="deckAreaFill" x1="0" x2="0" y1="0" y2="1"><stop stopColor="var(--chart-fill)" stopOpacity=".22"/><stop offset="1" stopColor="var(--chart-fill)" stopOpacity="0"/></linearGradient></defs><g className="frame-markers">{filmstripFrames.map((frame, i) => <line key={i} x1={frame.position * 700} x2={frame.position * 700} y1="0" y2="96"/>)}</g><path d={`${linePath(analysis.global, 700, 96)} L700,96 L0,96 Z`} fill="url(#deckAreaFill)"/><path d={linePath(analysis.global, 700, 96)} fill="none" stroke="var(--chart-line)" strokeWidth="2"/><line x1={playhead * 700} x2={playhead * 700} y1="0" y2="96" className="time-line"/></svg><input aria-label="Net engagement timeline" type="range" min="0" max={analysis.duration} step="0.1" value={time} onChange={(e) => scrubTo(Number(e.target.value))}/>{cutLayer}</div>
+            ? <div className={`timeline-graph net-graph ${showLiftPoints ? "showing-lift-points" : ""}`}><svg viewBox="0 0 700 96" preserveAspectRatio="none"><defs><linearGradient id="deckAreaFill" x1="0" x2="0" y1="0" y2="1"><stop stopColor="var(--chart-fill)" stopOpacity=".22"/><stop offset="1" stopColor="var(--chart-fill)" stopOpacity="0"/></linearGradient></defs><g className="frame-markers">{filmstripFrames.map((frame, i) => <line key={i} x1={frame.position * 700} x2={frame.position * 700} y1="0" y2="96"/>)}</g><path d={`${linePath(analysis.global, 700, 96)} L700,96 L0,96 Z`} fill="url(#deckAreaFill)"/><path d={linePath(analysis.global, 700, 96)} fill="none" stroke="var(--chart-line)" strokeWidth="2"/>{showLiftPoints && <g className="lift-point-lines">{liftPoints.map((point) => <path key={`${point.startIndex}-${point.endIndex}`} d={lineSegmentPath(analysis.global, point.startIndex, point.endIndex, 700, 96)} fill="none"/>)}</g>}<line x1={playhead * 700} x2={playhead * 700} y1="0" y2="96" className="time-line"/></svg><input aria-label="Net engagement timeline" type="range" min="0" max={analysis.duration} step="0.1" value={time} onChange={(e) => scrubTo(Number(e.target.value))}/>{cutLayer}</div>
             : <div className="timeline-graph systems-graph"><svg viewBox="0 0 700 96" preserveAspectRatio="none"><g className="frame-markers">{filmstripFrames.map((frame, i) => <line key={i} x1={frame.position * 700} x2={frame.position * 700} y1="0" y2="96"/>)}</g>{timelineSeries.map((series) => <path className={active.short === series.short ? "timeline-line active" : "timeline-line"} d={linePath(series.values, 700, 96)} fill="none" stroke={series.color} strokeWidth={active.short === series.short ? "2.6" : "1.5"} key={series.key}/>) }<line x1={playhead * 700} x2={playhead * 700} y1="0" y2="96" className="time-line"/></svg><input aria-label="System comparison timeline" type="range" min="0" max={analysis.duration} step="0.1" value={time} onChange={(e) => scrubTo(Number(e.target.value))}/>{cutLayer}</div>}
         </div>
 
         {(spliceMode || cuts.length > 0) && <div className="deck-expand">
           <section className="video-editor-strip" aria-label="Video frame timeline"><div className="editor-track"><i className="editor-playhead" style={{ left: `${playhead * 100}%` }}/>{(cuts.length > 0 || draftCut) && <div className="track-cuts">{cuts.map((c, i) => <span className="cut-band" key={i} style={{ left: `${(c.start / analysis.duration) * 100}%`, width: `${((c.end - c.start) / analysis.duration) * 100}%` }}/>) }{draftCut && <span className="cut-band draft" style={{ left: `${(draftCut.start / analysis.duration) * 100}%`, width: `${((draftCut.end - draftCut.start) / analysis.duration) * 100}%` }}/>}</div>}<div className="filmstrip">{filmstripFrames.map((frame, index) => { const inCut = cuts.some((c) => frame.time >= c.start - 1e-3 && frame.time < c.end); return <button className={`${Math.abs(time - frame.time) < analysis.duration / (FILMSTRIP_FRAME_COUNT * 2) ? "selected " : ""}${inCut ? "cut-frame" : ""}`} onClick={() => scrubTo(frame.time)} key={index} aria-label={`Seek to ${formatTime(frame.time)}${inCut ? " (trimmed)" : ""}`}><span className="frame-visual">{videoUrl ? <video src={`${videoUrl}#t=${frame.time.toFixed(2)}`} muted playsInline preload="metadata"/> : <i className={`sample-frame sample-frame-${index % 4}`}/>}</span></button>; })}</div></div></section>
           <div className="deck-segments">
-            <div className="deck-seg-head"><span className="eyebrow">Segments to regenerate</span>{segments.length > 0 && <span className="segments-count tnum">{segments.length}</span>}</div>
+            <div className="deck-seg-head"><span className="eyebrow">Segments to regenerate</span><span className="deck-seg-actions">{regenerableCount > 1 && <button className="segments-regen-all" onClick={regenerateAll} title="Generate takes for every prepared segment at once">Regenerate all ({regenerableCount})</button>}{segments.length > 0 && <span className="segments-count tnum">{segments.length}</span>}</span></div>
             {segments.length === 0
               ? <p className="deck-seg-empty">{spliceMode ? "Drag across the ribbon to cut a slot. Each cut queues here for regeneration." : "Turn on Splice, then drag the ribbon to cut a slot for AI regeneration."}</p>
-              : <div className="segment-list">{segments.map((seg, i) => { const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1; const key = `${seg.start}-${seg.end}`; const job = regenJobs[key]; const busy = Boolean(seg.preparing) || Boolean(job && (job.status === "extracting" || job.status === "awaiting_generation" || job.status === "generating" || job.status === "merging")); return <div className={`segment-card ${job?.status === "done" ? "done" : ""}`} key={key}>
-                <SegmentPreview src={videoUrl!} start={seg.start * factor} end={seg.end * factor}/>
-                <div className="segment-meta"><span className="segment-tag">SEG {i + 1}</span><b>{formatTime(seg.start)} – {formatTime(seg.end)}</b><small>{Math.round(seg.end - seg.start)}s slot · regenerated in place</small></div>
-                <div className="segment-actions">
-                  {job?.status === "done"
-                    ? <a className="segment-download" href={job.downloadUrl} download>Download <Icon name="upload" size={11}/></a>
-                    : busy
-                      ? <span className="segment-status"><i className="regen-dot"/>{seg.preparing ? "Preparing frames…" : `${REGEN_LABEL[job!.status]}${job?.startedAt ? ` · ${formatTime(Math.floor(((regenNow || Date.now()) - job.startedAt) / 1000))}` : ""}`}</span>
-                      : <button className="segment-regen" onClick={() => regenerate(seg)} disabled={!seg.frameId} title={job?.status === "error" ? job.error : seg.frameError || (seg.frameId ? "Regenerate this slot with AI" : "Frames are being prepared with this splice")}>{job?.status === "error" ? "Retry" : "Regenerate"} <Icon name="reset" size={11}/></button>}
-                  <button className="segment-remove" onClick={() => removeCut(cuts.indexOf(seg))} aria-label="Remove segment"><Icon name="close" size={13}/></button>
-                </div>
-                {busy && job?.logTail ? <small className="segment-logtail" title={job.logTail}>{job.logTail.trim().split("\n").filter(Boolean).slice(-1)[0]?.slice(0, 140)}</small> : null}
-              </div>; })}</div>}
+              : <div className="segment-list">{segments.map((seg, i) => {
+                  const factor = videoDuration > 0 ? videoDuration / analysis.duration : 1;
+                  const key = `${seg.start}-${seg.end}`;
+                  const variants = regenJobs[key]?.variants ?? [];
+                  const busy = isSegmentBusy(seg);
+                  const ready = isSegmentReady(seg);
+                  const doneCount = variants.filter((v) => v.status === "done").length;
+                  const errorCount = variants.filter((v) => v.status === "error").length;
+                  const firstStart = variants.find((v) => v.startedAt)?.startedAt;
+                  const liveLog = variants.find((v) => v.status === "generating" && v.logTail)?.logTail;
+                  return <div className={`segment-card ${ready ? "ready" : ""}`} key={key}>
+                    <SegmentPreview src={videoUrl!} start={seg.start * factor} end={seg.end * factor}/>
+                    <div className="segment-meta"><span className="segment-tag">SEG {i + 1}</span><b>{formatTime(seg.start)} – {formatTime(seg.end)}</b><small>{Math.round(seg.end - seg.start)}s slot · {VARIANT_COUNT} AI takes</small></div>
+                    <div className="segment-actions">
+                      {ready
+                        ? <button className="segment-regen ready" onClick={() => setVariantPicker(key)}>Choose ({doneCount}) <Icon name="reset" size={11}/></button>
+                        : busy
+                          ? <span className="segment-status"><i className="regen-dot"/>{seg.preparing ? "Preparing frames…" : `${doneCount}/${VARIANT_COUNT} takes${firstStart ? ` · ${formatTime(Math.floor(((regenNow || Date.now()) - firstStart) / 1000))}` : ""}`}</span>
+                          : <button className="segment-regen" onClick={() => regenerate(seg)} disabled={!seg.frameId} title={errorCount === VARIANT_COUNT && variants.length ? (variants.find((v) => v.error)?.error || "Generation failed") : seg.frameError || (seg.frameId ? `Generate ${VARIANT_COUNT} AI takes of this slot` : "Frames are being prepared with this splice")}>{errorCount === VARIANT_COUNT && variants.length ? "Retry" : "Regenerate"} <Icon name="reset" size={11}/></button>}
+                      <button className="segment-remove" onClick={() => removeCut(cuts.indexOf(seg))} aria-label="Remove segment"><Icon name="close" size={13}/></button>
+                    </div>
+                    {busy && liveLog ? <small className="segment-logtail" title={liveLog}>{liveLog.trim().split("\n").filter(Boolean).slice(-1)[0]?.slice(0, 140)}</small> : null}
+                  </div>; })}</div>}
           </div>
         </div>}
       </div>
@@ -784,6 +1038,51 @@ export default function Home() {
     </section>}
 
     {stage === "create" && <footer><span>Population-model estimate from facebook/tribev2 · not an individual measurement or diagnosis.</span><button className="footer-link" onClick={() => setShowInfo(true)}>How this works</button></footer>}
+
+    {variantPicker && regenJobs[variantPicker] && (() => {
+      const key = variantPicker;
+      const st = regenJobs[key];
+      const [start, end] = key.split("-").map(Number);
+      const slot = `${formatTime(start)} – ${formatTime(end)}`;
+      const variants = st.variants;
+      const stillGenerating = variants.some((v) => isInFlight(v.status));
+      const FACTORS: (keyof Factors)[] = ["AUD", "LANG", "ATTN", "VIS"];
+      return <div className="info-backdrop" onClick={() => setVariantPicker(null)}>
+        <div className="variant-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="info-head">
+            <h2>Choose a take · {slot}</h2>
+            <div className="variant-head-right">
+              {typeof st.average === "number" && <span className="variant-avg" title="Average headline (mean of the 4 factors) across the takes">avg {st.average} vs original</span>}
+              <button className="icon-button" onClick={() => setVariantPicker(null)} aria-label="Close"><Icon name="close" size={18}/></button>
+            </div>
+          </div>
+          <p className="variant-sub">
+            {VARIANT_COUNT} AI takes of this slot, each scored vs the original (50 = original baseline).
+            {stillGenerating ? " Still generating — takes appear as they finish." : st.scoring ? " Scoring against the original…" : " Pick one to splice in."}
+          </p>
+          <div className="variant-grid">
+            {variants.map((v, i) => <div className={`variant-card ${v.status} ${st.best === i && st.scored ? "best" : ""}`} key={i}>
+              <div className="variant-head">
+                <span>Take {i + 1}{st.best === i && st.scored ? <b className="variant-best" title="Best overall across the 4 factors"> · BEST</b> : null}</span>
+                <span className="variant-labels">
+                  {st.scoring && v.status === "done" && typeof v.score !== "number" && <em>scoring…</em>}
+                  {typeof v.score === "number" && <b className="variant-score" title="Headline: mean of the 4 factors, vs the original baseline of 50" aria-label={`Score ${v.score}, baseline 50`}>{v.score}</b>}
+                  {v.status === "done" ? <em className="ok">ready</em> : v.status === "error" ? <em className="bad">failed</em> : <em>{REGEN_LABEL[v.status]}</em>}
+                </span>
+              </div>
+              {v.status === "done" && v.clipUrl
+                ? <video className="variant-video" src={v.clipUrl} muted loop playsInline autoPlay controls/>
+                : <div className="variant-pending">{v.status === "error" ? <span className="variant-error" title={v.error}>{v.error || "Generation failed"}</span> : <><i className="regen-dot"/>{REGEN_LABEL[v.status]}</>}</div>}
+              {v.factors && <div className="variant-factors">{FACTORS.map((f) => <span key={f} className="variant-factor"><i>{f}</i>{Math.round(v.factors![f])}</span>)}</div>}
+              <button className="variant-use" disabled={v.status !== "done"} onClick={() => chooseVariant(key, i)}>Use this take</button>
+            </div>)}
+          </div>
+          <div className="variant-foot">
+            <button className="variant-reject" onClick={() => rejectAll(key)}>Reject all · keep original</button>
+          </div>
+        </div>
+      </div>;
+    })()}
 
     {showInfo && <div className="info-backdrop" onClick={() => setShowInfo(false)}>
       <div className="info-modal" onClick={(e) => e.stopPropagation()}>

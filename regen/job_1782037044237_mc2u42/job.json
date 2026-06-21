@@ -1,0 +1,18 @@
+{
+  "id": "job_1782037044237_mc2u42",
+  "status": "generating",
+  "stage": "agent",
+  "startSec": 0,
+  "endSec": 5.000000000000002,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782037028560_l52x9o",
+  "frameId": "frames_1782037042539_wxfo7g",
+  "provider": "seedance",
+  "agent": "codex",
+  "runId": "2026-06-21T10-17-24-208Z",
+  "takeIndex": 1,
+  "label": "0:00–0:05 · take 2",
+  "createdAt": "2026-06-21T10:17:25.135Z",
+  "updatedAt": "2026-06-21T11:20:06.561Z"
+}

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -11,6 +11,13 @@ import path from "node:path";
 
 export const REGEN_ROOT = path.join(process.cwd(), "regen");
 export const SOURCE_ROOT = path.join(REGEN_ROOT, "sources");
+// Per-run archive of the raw segments: one folder per regeneration run holds the
+// floor clip (the original segment being spliced out) plus each generated take.
+// The merged final.mp4 deliberately never lands here — only the 4 source clips.
+export const DATA_ROOT = path.join(process.cwd(), "data");
+// Containers frequently report a duration that extends beyond their final
+// decodable video frame. Keep splice endpoints out of that unreliable tail.
+export const FRAME_TAIL_SAFETY_SECONDS = 0.25;
 
 export type RegenStatus = "awaiting_generation" | "generating" | "merging" | "done" | "error";
 
@@ -25,7 +32,13 @@ export type RegenJob = {
   frameId: string;
   provider?: "seedance" | "kling"; // generation model chosen in the UI
   agent?: "claude" | "codex"; // which MCP agent the worker spawns to drive Pika
+  runId?: string; // batch id shared by every take of one regeneration run → data/<runId>/
+  takeIndex?: number; // 0-based position of this take within the run → take_<i+1>.mp4
   label?: string;
+  // TRIBE engagement headline (mean of the 4 families), referenced to the
+  // original. Set by the client from /api/regenerate/score after the run's
+  // takes finish generating — not by /complete.
+  score?: number;
   stage?: string;
   error?: string;
   createdAt: string;
@@ -71,6 +84,17 @@ export function sourceDir(id: string) {
   return path.join(SOURCE_ROOT, safe);
 }
 
+export function dataDir(runId: string) {
+  // Same path-traversal guard as job/source ids: the runId is a client-supplied
+  // timestamp, so strip anything that isn't filename-safe before joining.
+  const safe = runId.replace(/[^a-zA-Z0-9_-]/g, "");
+  return path.join(DATA_ROOT, safe);
+}
+
+export async function fileExists(p: string): Promise<boolean> {
+  try { await access(p); return true; } catch { return false; }
+}
+
 export async function readJob(id: string): Promise<RegenJob | null> {
   try {
     return JSON.parse(await readFile(path.join(jobDir(id), "job.json"), "utf8"));
@@ -80,8 +104,14 @@ export async function readJob(id: string): Promise<RegenJob | null> {
 }
 
 export async function writeJob(job: RegenJob): Promise<void> {
-  await mkdir(jobDir(job.id), { recursive: true });
-  await writeFile(path.join(jobDir(job.id), "job.json"), JSON.stringify({ ...job, updatedAt: new Date().toISOString() }, null, 2));
+  const dir = jobDir(job.id);
+  await mkdir(dir, { recursive: true });
+  // Atomic write (temp + rename): the worker polls job.json concurrently, so a
+  // reader must never catch a half-written file and a write must not be torn.
+  const target = path.join(dir, "job.json");
+  const tmp = path.join(dir, `.job.json.${process.pid}.tmp`);
+  await writeFile(tmp, JSON.stringify({ ...job, updatedAt: new Date().toISOString() }, null, 2));
+  await rename(tmp, target);
 }
 
 function shortCmd(cmd: string, args: string[]) {
@@ -153,6 +183,51 @@ export async function probe(file: string, opts: { jobId?: string; label?: string
 /** Extract a single frame at `sec` to a PNG (fast input-side seek). */
 export async function extractFrame(src: string, sec: number, out: string, opts: { jobId?: string; label?: string } = {}): Promise<void> {
   await run("ffmpeg", ["-y", "-ss", `${sec}`, "-i", src, "-frames:v", "1", "-q:v", "2", out], { ...opts, label: opts.label ?? `extract-frame@${sec.toFixed(3)}s` });
+}
+
+/**
+ * Build and publish a splice's two boundary images as one transaction. The
+ * caller receives the frame id only after both n_1 (start) and n_x (end) are
+ * present. A failed/cancelled extraction stays in the private staging folder
+ * and can never be mistaken for a usable splice by a regeneration job.
+ */
+export async function extractFramePair(src: string, startSec: number, endSec: number, framesDir: string, frameId: string): Promise<void> {
+  const staging = path.join(framesDir, `.${frameId}.pending`);
+  const stagedStart = path.join(staging, "start.png");
+  const stagedEnd = path.join(staging, "end.png");
+  const finalStart = path.join(framesDir, `${frameId}_start.png`);
+  const finalEnd = path.join(framesDir, `${frameId}_end.png`);
+  await rm(staging, { recursive: true, force: true });
+  await mkdir(staging, { recursive: true });
+  try {
+    await extractFrame(src, startSec, stagedStart, { label: `extract-boundary-start@${startSec.toFixed(3)}s` });
+    await extractFrame(src, endSec, stagedEnd, { label: `extract-boundary-end@${endSec.toFixed(3)}s` });
+    if (!(await fileExists(stagedStart)) || !(await fileExists(stagedEnd))) {
+      throw new Error("Frame extraction did not produce both splice boundaries");
+    }
+    // Both candidates now exist. Publish the retained n_1 and n_x boundaries
+    // only at this point; the UI never sees a half-complete frame id.
+    await rename(stagedStart, finalStart);
+    await rename(stagedEnd, finalEnd);
+  } catch (error) {
+    await rm(staging, { recursive: true, force: true });
+    throw error;
+  }
+  await rm(staging, { recursive: true, force: true });
+}
+
+/**
+ * Cut [startSec, endSec] of `src` into a standalone mp4 — this is the "floor"
+ * clip, the exact stretch of source that the generated take replaces. Re-encoded
+ * (not stream-copied) so the cut is frame-accurate at non-keyframe boundaries.
+ */
+export async function extractSegment(src: string, startSec: number, endSec: number, out: string, opts: { jobId?: string; label?: string } = {}): Promise<void> {
+  const start = Math.max(0, startSec);
+  const dur = Math.max(0.04, endSec - start);
+  await run("ffmpeg", ["-y", "-ss", `${start}`, "-i", src, "-t", `${dur}`,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "20",
+    "-c:a", "aac", "-movflags", "+faststart", out],
+    { ...opts, label: opts.label ?? `extract-segment[${start.toFixed(2)},${endSec.toFixed(2)}]` });
 }
 
 /**

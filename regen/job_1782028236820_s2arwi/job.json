@@ -1,0 +1,16 @@
+{
+  "id": "job_1782028236820_s2arwi",
+  "status": "done",
+  "stage": "complete",
+  "startSec": 0,
+  "endSec": 5,
+  "durationSec": 5,
+  "totalSec": 30.093061,
+  "sourceId": "source_1782028216839_uunfr2",
+  "frameId": "frames_1782028233190_6rcnm9",
+  "provider": "seedance",
+  "agent": "codex",
+  "label": "0:00–0:05",
+  "createdAt": "2026-06-21T07:50:36.862Z",
+  "updatedAt": "2026-06-21T07:54:39.714Z"
+}

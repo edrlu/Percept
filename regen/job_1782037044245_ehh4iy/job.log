@@ -1,0 +1,108 @@
+[2026-06-21T10:17:24.282Z] extract-floor START: ffmpeg -y -ss 0 -i /Users/edrlu/Documents/Cerebra/regen/sources/source_1782037028560_l52x9o/source.mp4 -t 5.000000000000002 -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 20 -c:a aac -movflags +faststart /Users/edrlu/Documents/Cerebra/data/2026-06-21T10-17-24-208Z/.floor.18971.efsdk.tmp.mp4
+[2026-06-21T10:17:25.151Z] extract-floor OK in 0.87s
+stderr:
+somav01iso2mp41
+    encoder         : Lavf62.12.100
+  Duration: 00:00:30.09, start: 0.000000, bitrate: 1176 kb/s
+  Stream #0:0[0x1](und): Video: av1 (libdav1d) (Main) (av01 / 0x31307661), yuv420p(tv, bt709), 1920x1080 [SAR 1:1 DAR 16:9], 1045 kb/s, 23.98 fps, 23.98 tbr, 24k tbn (default)
+    Metadata:
+      handler_name    : ISO Media file produced by Google Inc.
+  Stream #0:1[0x2](eng): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      handler_name    : ISO Media file produced by Google Inc.
+Stream mapping:
+  Stream #0:0 -> #0:0 (av1 (libdav1d) -> h264 (libx264))
+  Stream #0:1 -> #0:1 (aac (native) -> aac (native))
+Press [q] to stop, [?] for help
+[libx264 @ 0xb79405180] using SAR=1/1
+[libx264 @ 0xb79405180] using cpu capabilities: ARMv8 NEON DotProd I8MM
+[libx264 @ 0xb79405180] profile High, level 4.0, 4:2:0, 8-bit
+[libx264 @ 0xb79405180] 264 - core 165 r3222 b35605a - H.264/MPEG-4 AVC codec - Copyleft 2003-2025 - http://www.videolan.org/x264.html - options: cabac=1 ref=1 deblock=1:0:0 analyse=0x3:0x113 me=hex subme=2 psy=1 psy_rd=1.00:0.00 mixed_ref=0 me_range=16 chroma_me=1 trellis=0 8x8dct=1 cqm=0 deadzone=21,11 fast_pskip=1 chroma_qp_offset=0 threads=15 lookahead_threads=5 sliced_threads=0 nr=0 decimate=1 interlaced=0 bluray_compat=0 constrained_intra=0 bframes=3 b_pyramid=2 b_adapt=1 b_bias=0 direct=1 weightb=1 open_gop=0 weightp=1 keyint=250 keyint_min=23 scenecut=40 intra_refresh=0 rc_lookahead=10 rc=crf mbtree=1 crf=20.0 qcomp=0.60 qpmin=0 qpmax=69 qpstep=4 ip_ratio=1.40 aq=1:1.00
+Output #0, mp4, to '/Users/edrlu/Documents/Cerebra/data/2026-06-21T10-17-24-208Z/.floor.18971.efsdk.tmp.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomav01iso2mp41
+    encoder         : Lavf62.12.100
+  Stream #0:0(und): Video: h264 (avc1 / 0x31637661), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], q=2-31, 23.98 fps, 24k tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.100 libx264
+      handler_name    : ISO Media file produced by Google Inc.
+    Side data:
+      CPB properties: bitrate max/min/avg: 0/0/0 buffer size: 0 vbv_delay: N/A
+  Stream #0:1(eng): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 128 kb/s (default)
+    Metadata:
+      encoder         : Lavc62.28.100 aac
+      handler_name    : ISO Media file produced by Google Inc.
+frame=   43 fps=0.0 q=25.0 size=     512KiB time=00:00:01.71 bitrate=2453.0kbits/s speed=3.41x elapsed=0:00:00.50    [mp4 @ 0xb78c0f700] Starting second pass: moving the moov atom to the beginning of the file
+[out#0/mp4 @ 0xb78c009c0] video:925KiB audio:80KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.520012%
+frame=  120 fps=0.0 q=-1.0 Lsize=    1011KiB time=00:00:04.92 bitrate=1682.6kbits/s speed=5.86x elapsed=0:00:00.83    
+[libx264 @ 0xb79405180] frame I:4     Avg QP: 8.40  size: 71391
+[libx264 @ 0xb79405180] frame P:31    Avg QP:14.10  size: 15048
+[libx264 @ 0xb79405180] frame B:85    Avg QP:16.32  size:  2293
+[libx264 @ 0xb79405180] consecutive B-frames:  4.2%  3.3%  2.5% 90.0%
+[libx264 @ 0xb79405180] mb I  I16..4: 70.0% 14.4% 15.6%
+[libx264 @ 0xb79405180] mb P  I16..4:  5.6%  1.6%  1.0%  P16..4: 10.1%  4.0%  1.9%  0.0%  0.0%    skip:75.7%
+[libx264 @ 0xb79405180] mb B  I16..4:  0.3%  0.1%  0.0%  B16..8:  3.6%  0.9%  0.2%  direct: 1.2%  skip:93.8%  L0:44.3% L1:40.0% BI:15.7%
+[libx264 @ 0xb79405180] 8x8 transform intra:16.2% inter:14.5%
+[libx264 @ 0xb79405180] coded y,uvDC,uvAC intra: 26.0% 27.7% 19.7% inter: 1.4% 2.2% 0.5%
+[libx264 @ 0xb79405180] i16 v,h,dc,p: 72% 16%  6%  5%
+[libx264 @ 0xb79405180] i8 v,h,dc,ddl,ddr,vr,hd,vl,hu: 21% 15% 37%  2%  8%  5%  5%  4%  3%
+[libx264 @ 0xb79405180] i4 v,h,dc,ddl,ddr,vr,hd,vl,hu: 29% 19% 20%  3%  8%  5%  5%  6%  5%
+[libx264 @ 0xb79405180] i8c dc,h,v,p: 74%  9% 13%  4%
+[libx264 @ 0xb79405180] Weighted P-Frames: Y:0.0% UV:0.0%
+[libx264 @ 0xb79405180] kb/s:1513.65
+[aac @ 0xb79405c00] Qavg: 1796.190
+
+[2026-06-21T10:17:25.153Z] queued provider=seedance agent=codex duration=5s source=source_1782037028560_l52x9o frame=frames_1782037042539_wxfo7g slot=0:00–0:05 · take 3
+[2026-06-21T10:20:51.646Z] /complete received clip=2133175B; merging replace=[0.000, 5.000]
+[2026-06-21T10:20:51.655Z] probe-take-audio START: ffprobe -v error -show_entries stream=codec_type,width,height,r_frame_rate:format=duration -of json /Users/edrlu/Documents/Cerebra/regen/job_1782037044245_ehh4iy/clip.mp4
+[2026-06-21T10:20:51.689Z] probe-take-audio OK in 0.04s
+[2026-06-21T10:20:51.689Z] archive-take-mp3 START: ffmpeg -y -i /Users/edrlu/Documents/Cerebra/regen/job_1782037044245_ehh4iy/clip.mp4 -map 0:a:0 -vn -c:a libmp3lame -q:a 4 /Users/edrlu/Documents/Cerebra/data/2026-06-21T10-17-24-208Z/take_3.mp3
+[2026-06-21T10:20:51.736Z] archive-take-mp3 OK in 0.05s
+stderr:
+ffmpeg version 8.1 Copyright (c) 2000-2026 the FFmpeg developers
+  built with Apple clang version 21.0.0 (clang-2100.0.123.102)
+  configuration: --prefix=/opt/homebrew/Cellar/ffmpeg/8.1_1 --enable-shared --enable-pthreads --enable-version3 --cc=clang --host-cflags= --host-ldflags= --enable-ffplay --enable-gpl --enable-libsvtav1 --enable-libopus --enable-libx264 --enable-libmp3lame --enable-libdav1d --enable-libvmaf --enable-libvpx --enable-libx265 --enable-openssl --enable-videotoolbox --enable-audiotoolbox --enable-neon
+  libavutil      60. 26.100 / 60. 26.100
+  libavcodec     62. 28.100 / 62. 28.100
+  libavformat    62. 12.100 / 62. 12.100
+  libavdevice    62.  3.100 / 62.  3.100
+  libavfilter    11. 14.100 / 11. 14.100
+  libswscale      9.  5.100 /  9.  5.100
+  libswresample   6.  3.100 /  6.  3.100
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from '/Users/edrlu/Documents/Cerebra/regen/job_1782037044245_ehh4iy/clip.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+  Duration: 00:00:05.06, start: 0.000000, bitrate: 3371 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High) (avc1 / 0x31637661), yuv420p(progressive), 1280x720, 3184 kb/s, 24 fps, 24 tbr, 12288 tbn (default)
+    Metadata:
+      handler_name    : VideoHandler
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 44100 Hz, stereo, fltp, 191 kb/s (default)
+    Metadata:
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:1 -> #0:0 (aac (native) -> mp3 (libmp3lame))
+Press [q] to stop, [?] for help
+Output #0, mp3, to '/Users/edrlu/Documents/Cerebra/data/2026-06-21T10-17-24-208Z/take_3.mp3':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+    TSSE            : Lavf62.12.100
+  Stream #0:0(und): Audio: mp3, 44100 Hz, stereo, fltp (default)
+    Metadata:
+      encoder         : Lavc62.28.100 libmp3lame
+      handler_name    : SoundHandler
+[out#0/mp3 @ 0xc68c083c0] video:0KiB audio:72KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: 0.485642%
+size=      72KiB time=00:00:05.06 bitrate= 116.4kbits/s speed= 208x elapsed=0:00:00.02    
+
+[2026-06-21T10:20:51.736Z] archived generated take → data/2026-06-21T10-17-24-208Z/take_3.{mp4,mp3}
+[2026-06-21T10:20:51.738Z] probe-source-before-merge START: ffprobe -v error -show_entries stream=codec_type,width,height,r_frame_rate:format=duration -of json /Users/edrlu/Documents/Cerebra/regen/sources/source_1782037028560_l52x9o/source.mp4
+[2026-06-21T10:20:51.755Z] probe-source-before-merge OK in 0.02s
+[2026-06-21T10:20:51.755Z] probe-generated-clip START: ffprobe -v error -show_entries stream=codec_type,width,height,r_frame_rate:format=duration -of json /Users/edrlu/Documents/Cerebra/regen/job_1782037044245_ehh4iy/clip.mp4
+[2026-06-21T10:20:51.773Z] probe-generated-clip OK in 0.02s
+[2026-06-21T10:20:51.773Z] merge plan: source=1920x1080 fps=24000/1001 duration=30.093s audio=true; clip=1280x720 duration=5.062s audio=true; replace=[0.000, 5.000], segments=2
+[2026-06-21T10:20:51.774Z] merge-ffmpeg START: ffmpeg -y -i /Users/edrlu/Documents/Cerebra/regen/sources/source_1782037028560_l52x9o/source.mp4 -i /Users/edrlu/Documents/Cerebra/regen/job_1782037044245_ehh4iy/clip.mp4 -filter_complex [1:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24000/1001,format=yuv420p,setpts=PTS-STARTPTS[v1];[1:a]aresample=async=1,asetpts=PTS-STARTPTS[a1];[0:v]trim=start=5.000,setpts=PTS-STARTPTS[v2];[0:a]atrim=start=5.000,asetpts=PTS-STARTPTS[a2];[v1][a1][v2][a2]concat=n=2:v=1:a=1[vout][aout] -map [vout] -map [aout] -c:v libx264 -pix_fmt yuv420p -preset veryfast -crf 20 -c:a aac -movflags +faststart /Users/edrlu/Documents/Cerebra/regen/job_1782037044245_ehh4iy/final.mp4
