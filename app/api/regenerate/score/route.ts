@@ -58,7 +58,9 @@ export async function POST(request: Request) {
       body: form,
       signal: AbortSignal.timeout(14_400_000),
     });
-    const data = await upstream.json();
+    const raw = await upstream.text();
+    let data: unknown;
+    try { data = JSON.parse(raw); } catch { data = { error: raw || "Scoring worker returned a non-JSON response" }; }
     if (!upstream.ok) return NextResponse.json(data, { status: upstream.status });
     try { await writeFile(scoresFile, JSON.stringify(data)); } catch { /* best-effort cache */ }
     return NextResponse.json(data);
