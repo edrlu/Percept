@@ -62,3 +62,5 @@ yarn-error.log*
 /skills-lock.json
 __pycache__/
 next-env.d.ts
+.regen-worker.pid
+.regen-worker-*.log
