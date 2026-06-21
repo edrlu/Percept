@@ -52,7 +52,6 @@ yarn-error.log*
 /.regen-worker*.log
 /.cerebra-settings.json
 /worker/.cache/
-/prediction_cache/
 
 # Local AI-assistant tooling and Python bytecode
 /.agents/
