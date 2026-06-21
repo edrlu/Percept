@@ -543,7 +543,7 @@ export default function Home() {
       setRegenJobs((j) => ({ ...j, [key]: { status: "awaiting_generation", startedAt: Date.now(), jobId: data.jobId, startFrame: data.startFrame, endFrame: data.endFrame, logUrl: data.jobId ? `/api/regenerate/file?job=${data.jobId}&name=job.log` : undefined } }));
       const modelName = REGEN_PROVIDERS.find((p) => p.id === genModel)?.name ?? genModel;
       const agentName = genAgent === "claude" ? "Claude" : "Codex";
-      logUpsert(logId, { title: `Regenerate ${slot}`, detail: `Frames ready · generating ${durationSec}s clip via ${agentName} + Pika (${modelName})`, status: "active", bar: true });
+      logUpsert(logId, { title: `Regenerate ${slot}`, detail: `Frames ready · queued for the ${agentName} agent → Pika (${modelName}). If it sticks here, the agent/worker isn't running.`, status: "active", bar: true });
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed";
       setRegenJobs((j) => ({ ...j, [key]: { status: "error", error: message } }));
