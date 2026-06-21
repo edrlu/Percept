@@ -274,7 +274,21 @@ export function CorticalBrain({ familyLevels, intensity, dominantColor }: { fami
       // distance. deltaY < 0 (scroll up) zooms in; preventDefault stops the
       // page from scrolling under the canvas.
       const wheel = (event: WheelEvent) => { event.preventDefault(); targetDist = THREE.MathUtils.clamp(targetDist * (1 + event.deltaY * .0012), MIN_DIST, MAX_DIST); };
-      canvas.addEventListener("pointerdown", down); canvas.addEventListener("pointermove", move); canvas.addEventListener("pointerup", up); canvas.addEventListener("pointerleave", up); canvas.addEventListener("wheel", wheel, { passive: false });
+      // The brain is the hero, so it must be operable without a pointer: the
+      // canvas is focusable; arrows rotate, +/- zoom, 0/Home recentre.
+      const onKey = (event: KeyboardEvent) => {
+        const STEP = 0.2; let handled = true;
+        if (event.key === "ArrowLeft") { dq.setFromAxisAngle(screenYaw, -STEP); brain.quaternion.premultiply(dq); }
+        else if (event.key === "ArrowRight") { dq.setFromAxisAngle(screenYaw, STEP); brain.quaternion.premultiply(dq); }
+        else if (event.key === "ArrowUp") { dq.setFromAxisAngle(screenPitch, -STEP); brain.quaternion.premultiply(dq); }
+        else if (event.key === "ArrowDown") { dq.setFromAxisAngle(screenPitch, STEP); brain.quaternion.premultiply(dq); }
+        else if (event.key === "+" || event.key === "=") { targetDist = THREE.MathUtils.clamp(targetDist * 0.9, MIN_DIST, MAX_DIST); }
+        else if (event.key === "-" || event.key === "_") { targetDist = THREE.MathUtils.clamp(targetDist * 1.1, MIN_DIST, MAX_DIST); }
+        else if (event.key === "0" || event.key === "Home") { resetView.current(); }
+        else handled = false;
+        if (handled) { event.preventDefault(); resetT = 1; idleHold = 1.4; }
+      };
+      canvas.addEventListener("pointerdown", down); canvas.addEventListener("pointermove", move); canvas.addEventListener("pointerup", up); canvas.addEventListener("pointerleave", up); canvas.addEventListener("wheel", wheel, { passive: false }); canvas.addEventListener("keydown", onKey);
 
       // Animate orientation + zoom back to the opening view.
       resetView.current = () => { dragging = false; fromQuat.copy(brain.quaternion); resetT = 0; targetDist = DEFAULT_DIST; };
@@ -295,6 +309,7 @@ export function CorticalBrain({ familyLevels, intensity, dominantColor }: { fami
       const levels = uniforms.uLevels.value;
       const tmpColor = new THREE.Color();
       const white = new THREE.Color(0xffffff);
+      let lastGlow = ""; // only re-parse the dominant hue when it actually changes
       const render = () => {
         if (disposed) return;
         const dt = clock.getDelta();
@@ -309,11 +324,14 @@ export function CorticalBrain({ familyLevels, intensity, dominantColor }: { fami
         levels.w += (t[3] - levels.w) * k;
         // Tint the back-glow + rim by the dominant system, and pulse the spill
         // light with overall activation so the stage brightens when cortex fires.
-        tmpColor.set(glowColor.current);
-        glowLight.color.copy(tmpColor);
+        if (glowColor.current !== lastGlow) {
+          tmpColor.set(glowColor.current);
+          glowLight.color.copy(tmpColor);
+          uniforms.uRimColor.value.copy(tmpColor).lerp(white, 0.45);
+          lastGlow = glowColor.current;
+        }
         const act = Math.max(0, Math.min(1, latestIntensity.current / 100));
         glowLight.intensity = 0.35 + 2.4 * act;
-        uniforms.uRimColor.value.copy(tmpColor).lerp(white, 0.45);
         // Ease the camera dolly toward the current zoom target.
         camera.position.z += (targetDist - camera.position.z) * (1 - Math.pow(0.0025, dt));
         // Run the reset tumble if one was requested (ease-out cubic over ~0.45s).
@@ -337,9 +355,13 @@ export function CorticalBrain({ familyLevels, intensity, dominantColor }: { fami
       cleanup = () => {
         observer.disconnect();
         motionQuery.removeEventListener?.("change", onMotionChange);
-        canvas.removeEventListener("pointerdown", down); canvas.removeEventListener("pointermove", move); canvas.removeEventListener("pointerup", up); canvas.removeEventListener("pointerleave", up); canvas.removeEventListener("wheel", wheel);
+        canvas.removeEventListener("pointerdown", down); canvas.removeEventListener("pointermove", move); canvas.removeEventListener("pointerup", up); canvas.removeEventListener("pointerleave", up); canvas.removeEventListener("wheel", wheel); canvas.removeEventListener("keydown", onKey);
         meshes.forEach(({ mesh }) => { mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose(); });
-        backdrop.dispose(); bloom.dispose(); renderTarget.dispose(); composer.dispose(); renderer.dispose();
+        backdrop.dispose();
+        // composer.dispose() frees only its own render targets — dispose every
+        // pass (bloom, OutputPass, …) so their shader programs/geometry don't leak.
+        composer.passes.forEach((p) => (p as { dispose?: () => void }).dispose?.());
+        renderTarget.dispose(); composer.dispose(); renderer.dispose();
       };
     }
     mount();
@@ -347,7 +369,7 @@ export function CorticalBrain({ familyLevels, intensity, dominantColor }: { fami
   }, []);
 
   return <div className="cortical-wrap">
-    <canvas ref={canvasRef} className="cortical-canvas" aria-label="Interactive fsaverage cortical surface; drag to rotate, scroll to zoom" />
+    <canvas ref={canvasRef} className="cortical-canvas" tabIndex={0} role="img" aria-label="Interactive cortical surface. Drag or use arrow keys to rotate; scroll or +/- to zoom; press 0 to reset the view." />
     <div className={`surface-status ${state}`}>{state === "loading" ? "LOADING FSAVERAGE SURFACE" : state === "fallback" ? "SURFACE OFFLINE · PREVIEW MODE" : `${meshName.toUpperCase()} PIAL · WEBGL SURFACE`}</div>
     <button type="button" className="surface-reset" onClick={() => resetView.current()} aria-label="Reset view to default orientation and zoom">RESET VIEW</button>
     <div className="surface-instruction">DRAG TO ROTATE · SCROLL TO ZOOM</div>

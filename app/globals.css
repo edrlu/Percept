@@ -74,7 +74,7 @@
 html, body { height:100%; }
 body { margin:0; background:var(--app-bg); color:var(--ink); font-family:var(--font-sans); -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale; text-rendering:optimizeLegibility; overflow:hidden; }
 /* Tabular figures for any live-updating number so digits don't reflow. */
-.tnum, .topbar-score strong, .hero-figure strong, .hero-foot b, .sys-live, .deck-time b, .signal-number, .region-score, .segment-meta b, .segments-count, .activity-toggle em { font-variant-numeric:tabular-nums; }
+.tnum, .topbar-score strong, .hero-figure strong, .hero-foot b, .sys-live, .deck-time b, .segment-meta b, .segments-count, .activity-toggle em { font-variant-numeric:tabular-nums; }
 button,input { font:inherit; } button { cursor:pointer; }
 :focus-visible { outline:none; box-shadow:0 0 0 3px var(--focus-ring); border-radius:6px; }
 
@@ -154,14 +154,18 @@ footer span:first-child { max-width:660px; }
 /* The stage */
 .brain-hero { position:relative; flex:1 1 auto; min-height:0; overflow:hidden;
   background:radial-gradient(125% 95% at 50% 32%, #0d0f18 0%, #08080d 46%, #040405 100%); }
-.brain-hero .cortical-wrap { position:absolute; inset:0; z-index:1; }
+/* No z-index here: a positioned+z-indexed wrap would form a stacking context
+   that traps CorticalBrain's RESET VIEW button (z:5) beneath the dock (z:4).
+   Source order keeps the canvas painted behind the HUD. */
+.brain-hero .cortical-wrap { position:absolute; inset:0; }
 .brain-hero.dropping::after { content:""; position:absolute; inset:16px; border:1.5px dashed var(--line-strong); border-radius:18px; background:color-mix(in srgb,var(--ink) 4%,transparent); pointer-events:none; z-index:7; }
 /* Empty: dim the brain into a ghost behind the dropzone */
 .refine.empty .brain-hero::before { content:""; position:absolute; inset:0; z-index:2; background:color-mix(in srgb,var(--canvas) 48%,transparent); pointer-events:none; }
 
 /* CorticalBrain canvas + its overlays, restyled for the big stage */
-.cortical-canvas { display:block; width:100%; height:100%; cursor:grab; outline:none; }
+.cortical-canvas { display:block; width:100%; height:100%; cursor:grab; }
 .cortical-canvas:active { cursor:grabbing; }
+.cortical-canvas:focus-visible { outline:2px solid rgba(255,255,255,.55); outline-offset:-4px; }
 .surface-status { position:absolute; left:20px; top:16px; z-index:3; font:500 8px var(--font-mono); letter-spacing:.8px; color:var(--stage-muted); }
 .surface-status.ready { color:var(--ink-faint); }
 .surface-status.fallback { color:var(--ink); }
@@ -176,7 +180,7 @@ footer span:first-child { max-width:660px; }
 .legend-title { text-align:left; font:500 9px var(--font-mono); color:var(--stage-muted); margin-top:5px; letter-spacing:.5px; }
 
 /* Hero readout — the one reading that always travels (top-left, no box) */
-.hero-readout { position:absolute; left:40px; top:34px; z-index:4; display:flex; flex-direction:column; gap:5px; max-width:300px; pointer-events:none; }
+.hero-readout { position:absolute; left:40px; top:34px; z-index:4; display:flex; flex-direction:column; gap:5px; max-width:300px; pointer-events:none; text-shadow:0 1px 12px rgba(0,0,0,.6), 0 0 2px rgba(0,0,0,.55); }
 .hero-eyebrow { font:500 11px var(--font-mono); letter-spacing:.3px; color:var(--muted); }
 .hero-figure { display:flex; align-items:baseline; gap:7px; }
 .hero-figure strong { font:300 76px/0.92 var(--font-sans); letter-spacing:-3.4px; color:var(--ink); }
@@ -186,7 +190,7 @@ footer span:first-child { max-width:660px; }
 .hero-foot b { color:var(--muted); }
 
 /* Live caption — bottom-left, low contrast */
-.stage-caption { position:absolute; left:40px; bottom:30px; z-index:4; display:flex; align-items:center; gap:8px; font:500 11px var(--font-mono); color:var(--stage-muted); pointer-events:none; }
+.stage-caption { position:absolute; left:40px; bottom:30px; z-index:4; display:flex; align-items:center; gap:8px; font:500 11px var(--font-mono); color:var(--stage-muted); pointer-events:none; text-shadow:0 1px 6px rgba(0,0,0,.85), 0 0 2px rgba(0,0,0,.7); }
 .stage-caption b { font:500 13px var(--font-sans); letter-spacing:-.2px; }
 .pulse-ring { width:8px; height:8px; flex:none; border-radius:50%; border:1px solid currentColor; box-shadow:0 0 0 4px color-mix(in srgb,var(--ink) 7%,transparent); animation:pulse-ring 2.6s ease-in-out infinite; }
 @keyframes pulse-ring { 0%,100%{opacity:.45} 50%{opacity:1} }
@@ -267,6 +271,8 @@ footer span:first-child { max-width:660px; }
 .splice-toggle:hover:not(:disabled) { background:var(--control-hover); color:var(--ink); }
 .splice-toggle.selected { color:var(--danger-text); border-color:var(--danger-text); background:color-mix(in srgb,var(--danger) 16%,var(--control-bg)); }
 .splice-toggle:disabled { opacity:.45; cursor:not-allowed; }
+.deck-clear { border:1px solid var(--line); background:transparent; color:var(--muted); padding:7px 11px; border-radius:8px; font:500 10px var(--font-mono); letter-spacing:.3px; }
+.deck-clear:hover { color:var(--ink); border-color:var(--line-strong); background:var(--surface-hover); }
 
 .deck-graph { position:relative; height:92px; padding:0 22px 8px; }
 .deck-graph .timeline-graph { height:100%; }
@@ -402,7 +408,9 @@ footer span:first-child { max-width:660px; }
   .hero-figure strong { font-size:52px; letter-spacing:-2.2px; }
   .stage-caption { left:18px; bottom:14px; }
   .activity-legend { display:none; }
-  .stage-clip { display:none; }
+  /* Keep the playback <video> in the layout tree (iOS won't play a display:none
+     video that drives the timeline) — just collapse it out of sight. */
+  .stage-clip { position:absolute; width:1px; height:1px; padding:0; opacity:0; pointer-events:none; overflow:hidden; }
   .surface-reset { top:48px; right:14px; }
   .systems-dock { left:12px; right:12px; top:auto; bottom:12px; width:auto; max-height:46%; }
   .deck-bar { flex-wrap:wrap; gap:8px; padding:9px 14px; }

@@ -629,10 +629,6 @@ export default function Home() {
   const playhead = (time / analysis.duration);
 
 
-  function selectFamily(short: string) {
-    const index = analysis.regions.findIndex((region) => region.short === short);
-    if (index >= 0) setRegionIndex(index);
-  }
 
   return <main className="app-shell" style={activeScheme.tokens as CSSProperties}>
     <header className="topbar">
@@ -640,10 +636,10 @@ export default function Home() {
       <ProgressRail stage={stage} onStage={(s) => { if (s !== "refine") { setSpliceMode(false); setDraftCut(null); } setStage(s); }} />
       <div className="topbar-right">
         <div className="model-pill"><span className="live-dot"/>{status}</div>
-        <div className="topbar-score">
+        {stage === "create" && <div className="topbar-score">
         <div><span className="score-label">Engagement</span><span className="score-foot">Four-system peak</span></div>
         <strong>{score}<small>/100</small></strong>
-        </div>
+        </div>}
         <div className="appearance-control">
           <button className={`icon-button ${showAppearance ? "active" : ""}`} onClick={() => setShowAppearance(!showAppearance)} aria-label="Color scheme settings" aria-expanded={showAppearance} aria-haspopup="dialog"><Icon name="settings" size={17}/></button>
           {showAppearance && <div className="appearance-menu" role="dialog" aria-label="Settings">
@@ -685,7 +681,8 @@ export default function Home() {
         {/* The single live annotation — low contrast, bottom-left */}
         <div className="stage-caption"><span className="pulse-ring"/><span>Now driving</span><b style={{ color: dominant.color }}>{dominant.name}</b></div>
 
-        {/* Stage tools float top-right; reset/legend belong to CorticalBrain */}
+        {/* Stage tools float top-right. CorticalBrain renders its own RESET VIEW
+            (recentres the camera only); clearing the clip/analysis lives in the deck. */}
         <button className="activity-toggle" onClick={() => setActivityOpen((o) => !o)} aria-expanded={activityOpen} aria-label="Activity feed"><span className="at-dot" data-on={logs.some((l) => l.status === "active") ? "1" : "0"}/>Activity{logs.length ? <em className="tnum">{logs.length}</em> : null}</button>
 
         {/* Systems dock: glanceable rows, tap to reveal anatomy + impact + trace (progressive disclosure) */}
@@ -719,8 +716,8 @@ export default function Home() {
           </button>
           <button type="button" className="dz-or" onClick={() => setStage("create")}>or generate one in Create</button>
         </div>}
-        {isAnalyzing && <div className="stage-loading"><span className="log-spinner"/>Running TRIBE v2 prediction{file ? ` · ${file.name}` : ""}</div>}
-        {analysis.source === "demo" && videoUrl && !isAnalyzing && <div className="stage-note">Live model offline — showing a sample response.</div>}
+        {isAnalyzing && <div className="stage-loading" role="status" aria-live="polite"><span className="log-spinner"/>Running TRIBE v2 prediction{file ? ` · ${file.name}` : ""}</div>}
+        {analysis.source === "demo" && videoUrl && !isAnalyzing && <div className="stage-note" role="status" aria-live="polite">Live model offline — showing a sample response.</div>}
 
         {/* The actual playback video (drives the timeline + brain) + a compact corner preview */}
         <input ref={inputRef} onChange={onFileChange} accept="video/mp4,video/quicktime,video/webm" type="file" hidden/>
@@ -746,6 +743,7 @@ export default function Home() {
           <span className="deck-spacer"/>
           <div className="view-toggle" role="group" aria-label="Timeline view"><button className={timelineMode === "net" ? "selected" : ""} onClick={() => setTimelineMode("net")}>Net</button><button className={timelineMode === "split" ? "selected" : ""} onClick={() => setTimelineMode("split")}>Split</button></div>
           <button className={`splice-toggle ${spliceMode ? "selected" : ""}`} onClick={() => setSpliceMode((m) => !m)} disabled={!videoUrl || !sourceId} title={!videoUrl ? "Upload a video to splice" : sourceId ? "Mark portions to cut out" : "Preparing video for splicing"}>{spliceMode ? "Cutting…" : sourceId ? "Splice" : "Preparing…"}</button>
+          {videoUrl && <button className="deck-clear" onClick={reset} title="Clear this clip and start over">Clear</button>}
         </div>
 
         <div className="deck-graph">
