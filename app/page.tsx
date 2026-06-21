@@ -163,7 +163,8 @@ function SegmentPreview({ src, start, end }: { src: string; start: number; end: 
 }
 
 export default function Home() {
-  const [colorScheme, setColorScheme] = useState<ColorSchemeId>(DEFAULT_COLOR_SCHEME);
+  // One definitive theme ships, so the scheme is a constant (no runtime switch).
+  const colorScheme: ColorSchemeId = DEFAULT_COLOR_SCHEME;
   const [file, setFile] = useState<File | null>(null);
   const [videoUrl, setVideoUrl] = useState<string | null>(null);
   const [analysis, setAnalysis] = useState<Analysis>(() => demoAnalysisFor(DEFAULT_COLOR_SCHEME));
@@ -179,7 +180,7 @@ export default function Home() {
   const [timelineMode, setTimelineMode] = useState<"net" | "split">("net");
   // The three-stage flow: Create (Studio) → Measure (brain response) → Refine
   // (cut & regenerate). Measure and Refine share the analysis workspace; the
-  // stage controls which surface is foregrounded (see [data-stage] in the CSS).
+  // stage gates which tools render (splice + segments) via the conditionals below.
   const [stage, setStage] = useState<Stage>("create");
   const [spliceMode, setSpliceMode] = useState(false);
   // Each cut marks a region "trimmed" from playback while the full source video
@@ -624,11 +625,6 @@ export default function Home() {
   }, [analysis.duration, analysis.frames]);
   const playhead = (time / analysis.duration);
 
-  function chooseScheme(scheme: ColorSchemeId) {
-    setColorScheme(scheme);
-    setAnalysis((current) => withSchemeColors(current, scheme));
-    setShowAppearance(false);
-  }
 
   function selectFamily(short: string) {
     const index = analysis.regions.findIndex((region) => region.short === short);
@@ -638,7 +634,7 @@ export default function Home() {
   return <main className="app-shell" style={activeScheme.tokens as CSSProperties}>
     <header className="topbar">
       <div className="wordmark"><span className="wordmark-mark" aria-hidden><b/></span><span>percept</span></div>
-      <ProgressRail stage={stage} onStage={setStage} />
+      <ProgressRail stage={stage} onStage={(s) => { if (s !== "refine") { setSpliceMode(false); setDraftCut(null); } setStage(s); }} />
       <div className="topbar-right">
         <div className="model-pill"><span className="live-dot"/>{status}</div>
         <div className="topbar-score">

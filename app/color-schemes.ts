@@ -24,7 +24,7 @@ export const COLOR_SCHEMES: Record<ColorSchemeId, ColorScheme> = {
     tokens: {
       "--ink": "#F6F6F7",
       "--muted": "#9A9AA2",
-      "--ink-faint": "#62626A",
+      "--ink-faint": "#8A8A92",
 
       "--app-bg": "#08080A",
       "--paper": "#0A0A0C",
