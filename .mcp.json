@@ -1,8 +1,13 @@
 {
   "mcpServers": {
-    "pika": {
-      "type": "http",
-      "url": "https://mcp.pika.me/api/mcp"
+    "cerebra": {
+      "command": "${CLAUDE_PLUGIN_ROOT}/.venv/bin/python",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/worker/mcp_server.py"],
+      "env": {
+        "TRIBEV2_MODEL_ID": "facebook/tribev2",
+        "TRIBEV2_CACHE_DIR": "${CLAUDE_PLUGIN_ROOT}/worker/.cache",
+        "PYTHONPATH": "${CLAUDE_PLUGIN_ROOT}/worker"
+      }
     }
   }
 }

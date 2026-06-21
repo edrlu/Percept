@@ -1,0 +1,14 @@
+{
+  "name": "cerebra",
+  "description": "Cerebra — predict a video's population-average cortical-engagement curve with Meta's TRIBE v2 (bundled as an MCP server) and auto-cut it to the peak-engagement moments. Pairs the TRIBE backend with the Pika creative suite for trimming + captions.",
+  "version": "0.1.0",
+  "author": { "name": "Sebastian Arellano-Rubach", "email": "sebastian@getstrada.com" },
+  "homepage": "https://github.com/edrlu/Cerebra",
+  "repository": "https://github.com/edrlu/Cerebra",
+  "license": "Apache-2.0",
+  "keywords": [
+    "cerebra", "tribe", "tribev2", "engagement", "cortical", "fmri", "neuro",
+    "video", "highlight", "auto-cut", "editing", "captions",
+    "mcp", "claude-code", "agent", "pika"
+  ]
+}

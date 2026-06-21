@@ -1,0 +1,24 @@
+{
+  "name": "cerebra",
+  "description": "Cerebra plugin marketplace — neural engagement analysis (TRIBE v2) + auto-editing. Distributes the cerebra plugin: a bundled TRIBE v2 MCP server plus the cerebra-cut skill.",
+  "owner": {
+    "name": "Sebastian Arellano-Rubach",
+    "email": "sebastian@getstrada.com"
+  },
+  "plugins": [
+    {
+      "name": "cerebra",
+      "source": "./",
+      "description": "Predict a video's population-average cortical-engagement curve with Meta's TRIBE v2 and auto-cut to the peak-engagement moments. Bundles a TRIBE v2 MCP server (stdio) and the cerebra-cut skill; pairs with the pika plugin for trimming + captions.",
+      "version": "0.1.0",
+      "category": "creative",
+      "author": { "name": "Sebastian Arellano-Rubach", "email": "sebastian@getstrada.com" },
+      "homepage": "https://github.com/edrlu/Cerebra",
+      "repository": "https://github.com/edrlu/Cerebra",
+      "tags": [
+        "cerebra", "tribe", "engagement", "cortical", "fmri", "video",
+        "highlight", "auto-cut", "editing", "mcp", "claude-code", "pika"
+      ]
+    }
+  ]
+}

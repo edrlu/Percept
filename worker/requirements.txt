@@ -3,4 +3,5 @@ uvicorn[standard]>=0.32,<1.0
 python-multipart>=0.0.20
 mne>=1.8,<2.0
 nilearn>=0.11,<1.0
+mcp>=1.12,<2.0
 git+https://github.com/facebookresearch/tribev2.git
