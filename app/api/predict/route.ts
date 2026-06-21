@@ -1,18 +1,14 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-// A cold first inference (loading ~25GB of weights into the GPU) can take several
+// A cold first inference (loading ~25GB of weights into the GPU) can take a few
 // minutes; allow the UI to wait instead of timing out and falling back to demo
-// data. (A warm worker is seconds.)
+// data. (A warm GPU worker is seconds.)
+// NOTE: Node's fetch (undici) also has a ~300s headersTimeout that can't be raised
+// from here. In practice it doesn't bite: on the A100 a cold run finished in
+// ~4.5 min (under it), warm runs are seconds, and the per-video cache makes
+// repeats instant. Pre-cache slow clips via a direct worker call to avoid it.
 export const maxDuration = 14400;
-
-// Node's fetch (undici) has a ~300s headersTimeout that would still cut off a slow
-// cold inference even with maxDuration raised. Lift it globally — best-effort:
-// no-ops if the bundled undici isn't importable.
-import("next/dist/compiled/undici")
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  .then((u: any) => u.setGlobalDispatcher?.(new u.Agent({ headersTimeout: 0, bodyTimeout: 0 })))
-  .catch(() => {});
 
 /**
  * Thin gateway to the GPU inference worker. Keeping Python and its sizeable
