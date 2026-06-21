@@ -533,6 +533,23 @@ async def predict(video: UploadFile = File(...)):
             try:
                 cached = json.loads(cache_file.read_text())
                 cached["cached"] = True
+                # Scoring (/score_takes) reuses the original's per-vertex baseline
+                # (.ref.npz). A fresh /predict saves it below, but cache entries
+                # from before the scoring feature — or after a cleanup — may lack
+                # it, which would make /score_takes 409. Recompute it on the GPU
+                # so a cached original can ALWAYS be scored against; once saved,
+                # future scoring is instant.
+                ref_file = PREDICTIONS_DIR / f"{digest}.ref.npz"
+                if not ref_file.exists() and model is not None:
+                    try:
+                        infer_path = _maybe_downscale(destination)
+                        events = model.get_events_dataframe(video_path=str(infer_path))
+                        predictions, _ = model.predict(events, verbose=False)
+                        mu, sd = reference_stats(predictions)
+                        np.savez(ref_file, mu=mu, sd=sd)
+                        print(f"[cache] recomputed missing baseline for {digest[:12]}")
+                    except Exception as exc:
+                        print(f"[cache] could not recompute baseline {digest[:12]}: {exc}")
                 print(f"[cache] hit {digest[:12]} -> returning saved result")
                 return cached
             except Exception as exc:  # corrupt entry: fall through and recompute
