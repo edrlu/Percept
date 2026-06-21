@@ -261,6 +261,15 @@ def get_surface_mesh() -> dict:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     global model
+    # Opt-in V-JEPA2 encode speedups (batched forwards + decode/forward overlap).
+    # No-op unless TRIBEV2_BATCH>1 or TRIBEV2_PREFETCH=1, so the default path is
+    # the untouched stock neuralset loop. Must run before the first /predict.
+    try:
+        from vjepa_fastpath import install_fastpath
+
+        install_fastpath()
+    except Exception as exc:  # never block startup on an optional speedup
+        print(f"[vjepa-fastpath] not installed: {exc}")
     # This is deliberately loaded once: weights and feature extractors are large.
     model = TribeModel.from_pretrained(MODEL_ID, cache_folder=CACHE_DIR)
     # Build the atlas->vertex mapping once, at startup, so no request ever triggers

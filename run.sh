@@ -29,6 +29,11 @@ VENV_DIR="${TRIBEV2_VENV:-$ROOT_DIR/.venv}"
 WORKER_HOST="${TRIBEV2_HOST:-127.0.0.1}"
 WORKER_PORT="${TRIBEV2_PORT:-8000}"
 NEXT_PORT="${PORT:-3000}"
+# V-JEPA2 encode speedups (worker/vjepa_fastpath.py): batch the GPU forwards and
+# overlap CPU decode with the forward. Override per run; set TRIBEV2_BATCH=1 (and
+# TRIBEV2_PREFETCH=0) to fall back to the stock per-window loop for A/B checks.
+export TRIBEV2_BATCH="${TRIBEV2_BATCH:-4}"
+export TRIBEV2_PREFETCH="${TRIBEV2_PREFETCH:-1}"
 WORKER_LOG=""
 WORKER_PID=""
 
