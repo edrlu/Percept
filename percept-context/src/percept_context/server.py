@@ -1,4 +1,4 @@
-"""Engram MCP server (stdio).
+"""Percept Context MCP server (stdio).
 
 Exposes the Redis context graph as MCP tools any agent can call. Built on the
 official MCP Python SDK (FastMCP). The graph itself is lazily initialized on the
@@ -17,7 +17,7 @@ from .seed import seed_graph
 
 settings = load_settings()
 cg = ContextGraph(settings)
-mcp = FastMCP("engram")
+mcp = FastMCP("percept-context")
 
 
 def _graph(value: str) -> str | None:
@@ -164,7 +164,7 @@ def compose_brief(brief: str, graph: str = "", k: int = 5, hops: int = 1) -> dic
             "brief": brief,
             "grounded_context": rag["context"],
             "subgraph": {"nodes": rag["nodes"], "edges": rag["edges"]},
-            "note": "Set ANTHROPIC_API_KEY (and pip install 'engram-mcp[llm]') to auto-compose the optimized prompt.",
+            "note": "Set ANTHROPIC_API_KEY (and pip install 'percept-context-plugin[llm]') to auto-compose the optimized prompt.",
         }
     try:
         import anthropic
@@ -172,7 +172,7 @@ def compose_brief(brief: str, graph: str = "", k: int = 5, hops: int = 1) -> dic
         return {
             "brief": brief,
             "grounded_context": rag["context"],
-            "note": "Install the LLM extra: pip install 'engram-mcp[llm]'.",
+            "note": "Install the LLM extra: pip install 'percept-context-plugin[llm]'.",
         }
 
     client = anthropic.Anthropic(api_key=api_key)

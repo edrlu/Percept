@@ -1,6 +1,6 @@
 """Live smoke test. Requires REDIS_URL in the environment.
 
-    cd engram && python -m pytest -s tests/test_smoke.py
+    cd percept-context && python -m pytest -s tests/test_smoke.py
 
 Skips automatically if REDIS_URL is unset.
 """
@@ -13,8 +13,8 @@ import pytest
 if not os.environ.get("REDIS_URL"):
     pytest.skip("REDIS_URL not set", allow_module_level=True)
 
-from engram import ContextGraph, load_settings
-from engram.seed import seed_graph
+from percept_context import ContextGraph, load_settings
+from percept_context.seed import seed_graph
 
 
 @pytest.fixture(scope="module")

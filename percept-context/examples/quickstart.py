@@ -1,12 +1,12 @@
-"""End-to-end Engram demo against your Redis.
+"""End-to-end Percept Context demo against your Redis.
 
-    cd engram
+    cd percept-context
     cp .env.example .env   # set REDIS_URL
     python examples/quickstart.py
 """
 
-from engram import load_settings, ContextGraph
-from engram.seed import seed_graph
+from percept_context import load_settings, ContextGraph
+from percept_context.seed import seed_graph
 
 cg = ContextGraph(load_settings())
 

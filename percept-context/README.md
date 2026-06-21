@@ -1,14 +1,12 @@
-# Engram 🧠 — a Redis-native Context Graph + GraphRAG engine (MCP)
+# Percept Context 🧠 — a Redis-native Context Graph + GraphRAG engine (MCP)
 
-> An *engram* is the physical trace a memory leaves in the brain.
-> Engram is that trace for your knowledge — a queryable **context graph that lives inside Redis** and learns from outcomes.
+> A queryable **context graph for video-ad generation that lives entirely inside Redis** — and learns from outcomes.
 
-Engram turns Redis into a **reward-weighted property graph** and exposes it over the
-**Model Context Protocol (MCP)**, so any agent (Claude Code, Claude Desktop, your own)
-can store knowledge, run **GraphRAG** retrieval, and **close the loop** by reinforcing
-what actually performed.
-
-It ships with a curated video-ad knowledge graph, but the engine is domain-agnostic.
+`pip install percept-context-plugin` gives any agent (Claude Code, Claude Desktop, your own)
+direct access to a **reward-weighted property graph on Redis**, exposed over the
+**Model Context Protocol (MCP)**. Store creative knowledge, run **GraphRAG** retrieval, and
+**close the loop** by reinforcing what actually performed. Ships with a curated video-ad
+knowledge graph; the engine itself is domain-agnostic.
 
 ---
 
@@ -22,9 +20,9 @@ Redis is the obvious substrate for AI memory — but two things are missing from
 2. **No learning loop.** `SemanticCache` returns *a* prior answer, never the *best-performing*
    one — there's no notion of a reward signal feeding back into retrieval.
 
-Engram fills both, natively on Redis primitives:
+Percept Context fills both, natively on Redis primitives:
 
-| Concern | How Engram does it |
+| Concern | How it's done |
 | --- | --- |
 | Nodes + embeddings | Redis hashes indexed by **RedisVL** (`SearchIndex`, cosine vector field) |
 | Edges + weights | Redis **sorted sets** (`member=neighbor, score=weight`) → O(log n) "best neighbors first" |
@@ -40,12 +38,12 @@ Engram fills both, natively on Redis primitives:
 ```
           add_node / link_nodes                 record_outcome(path, reward)
                   │                                        ▲
-                  ▼                                        │ (e.g. TRIBE score)
+                  ▼                                        │ (e.g. a TRIBE engagement score)
    ┌──────────────────────────────────────────────────────────────────┐
    │                          R E D I S                                 │
    │                                                                    │
    │  Nodes (hash + vector, RedisVL SearchIndex)   Edges (sorted sets)  │
-   │  engram:node:{graph}:{uuid}                   engram:adj:{graph}:…  │
+   │  percept:node:{graph}:{uuid}                  percept:adj:{graph}:… │
    └──────────────────────────────────────────────────────────────────┘
                   ▲                                        │
                   │ 1. VectorQuery → entry nodes           │ 2. ZREVRANGE → top-weight
@@ -66,40 +64,28 @@ Requires Python ≥ 3.10 and a Redis with the Search/Query module
 embedding model (MiniLM, 384-dim) — no API key needed.
 
 ```bash
-cd engram
-python -m venv .venv && source .venv/bin/activate
-pip install -e .
+pip install percept-context-plugin
 ```
 
-Configure your connection:
+Configure your connection (or pass env vars at registration):
 
 ```bash
-cp .env.example .env
-# edit .env → set REDIS_URL (and REDIS_PROTOCOL=3 for Redis Cloud)
+export REDIS_URL=redis://localhost:6379
+export REDIS_PROTOCOL=2
 ```
 
-Verify end-to-end against your Redis:
-
-```bash
-python examples/quickstart.py
-```
+> Torch-free install: `pip install percept-context-plugin[openai]` and set
+> `PERCEPT_VECTORIZER=openai` + `OPENAI_API_KEY` to skip the local model.
 
 ---
 
 ## Register with Claude Code
 
 ```bash
-claude mcp add engram --scope local -- \
-  /absolute/path/to/engram/.venv/bin/engram-mcp
-```
-
-Pass the connection via env if you don't use a `.env` file:
-
-```bash
-claude mcp add engram --scope local \
-  --env REDIS_URL=redis://default:<pwd>@<host>.redis.io:<port> \
-  --env REDIS_PROTOCOL=3 \
-  -- /absolute/path/to/engram/.venv/bin/engram-mcp
+claude mcp add percept-context --scope local \
+  --env REDIS_URL=redis://localhost:6379 \
+  --env REDIS_PROTOCOL=2 \
+  -- percept-context
 ```
 
 ### Claude Desktop (`claude_desktop_config.json`)
@@ -107,11 +93,11 @@ claude mcp add engram --scope local \
 ```json
 {
   "mcpServers": {
-    "engram": {
-      "command": "/absolute/path/to/engram/.venv/bin/engram-mcp",
+    "percept-context": {
+      "command": "percept-context",
       "env": {
-        "REDIS_URL": "redis://default:<pwd>@<host>.redis.io:<port>",
-        "REDIS_PROTOCOL": "3"
+        "REDIS_URL": "redis://localhost:6379",
+        "REDIS_PROTOCOL": "2"
       }
     }
   }
@@ -141,7 +127,7 @@ claude mcp add engram --scope local \
 
 Every tool takes an optional `graph` namespace:
 
-- `graph` omitted → the **shared** graph (`ENGRAM_DEFAULT_GRAPH`, default `"shared"`).
+- `graph` omitted → the **shared** graph (`PERCEPT_DEFAULT_GRAPH`, default `"shared"`).
 - `graph="user:dean"` → that user's **personal** graph, isolated by key prefix.
 
 Query the shared graph for curated, proven knowledge; query a personal graph for
@@ -149,7 +135,17 @@ what *that* user's own outcomes have taught the system. They live side-by-side i
 
 ---
 
-## Example session (inside an agent)
+## Quickstart (from source)
+
+```bash
+git clone <this-repo> && cd percept-context
+python -m venv .venv && source .venv/bin/activate
+pip install -e .
+cp .env.example .env            # set REDIS_URL
+python examples/quickstart.py   # seeds, queries, reinforces, prints top performers
+```
+
+Example agent session:
 
 ```
 seed_demo_graph()
@@ -168,13 +164,13 @@ graph_rag_query("energy drink ad that stops the scroll")              # now bias
 | --- | --- | --- |
 | `REDIS_URL` | – (required) | Redis connection string. |
 | `REDIS_PROTOCOL` | `2` | Use `3` for Redis Cloud / RESP3. |
-| `ENGRAM_INDEX` | `engram_nodes` | RediSearch index name. |
-| `ENGRAM_PREFIX` | `engram:node` | Node key prefix. |
-| `ENGRAM_DEFAULT_GRAPH` | `shared` | Default namespace. |
-| `ENGRAM_VECTORIZER` | `hf` | `hf` (local) or `openai`. |
-| `ENGRAM_EMBED_MODEL` | `…all-MiniLM-L6-v2` | Embedding model. |
+| `PERCEPT_INDEX` | `percept_nodes` | RediSearch index name. |
+| `PERCEPT_PREFIX` | `percept:node` | Node key prefix. |
+| `PERCEPT_DEFAULT_GRAPH` | `shared` | Default namespace. |
+| `PERCEPT_VECTORIZER` | `hf` | `hf` (local) or `openai`. |
+| `PERCEPT_EMBED_MODEL` | `…all-MiniLM-L6-v2` | Embedding model. |
 | `ANTHROPIC_API_KEY` | – | Enables LLM composition in `compose_brief`. |
-| `ENGRAM_LLM_MODEL` | `claude-opus-4-8` | Model for `compose_brief`. |
+| `PERCEPT_LLM_MODEL` | `claude-opus-4-8` | Model for `compose_brief`. |
 
 ---
 

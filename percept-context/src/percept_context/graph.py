@@ -1,12 +1,12 @@
-"""The Engram context graph: a reward-weighted property graph on Redis.
+"""The Percept Context context graph: a reward-weighted property graph on Redis.
 
 Storage model
 -------------
 Nodes  : Redis hashes under ``{prefix}:{graph}:{uuid}`` indexed by RedisVL
          (vector + tag/text/numeric fields). Node props live in a sibling hash.
 Edges  : adjacency in sorted sets, score = edge weight (reward).
-           out: engram:adj:{graph}:out:{src}:{type}  member=dst score=weight
-           in : engram:adj:{graph}:in:{dst}:{type}   member=src score=weight
+           out: percept:adj:{graph}:out:{src}:{type}  member=dst score=weight
+           in : percept:adj:{graph}:in:{dst}:{type}   member=src score=weight
          edge types per node tracked in a set for "all neighbors" traversal.
 
 Retrieval (GraphRAG)
@@ -56,16 +56,16 @@ class ContextGraph:
 
     # ----------------------------------------------------------- key helpers
     def _adj(self, graph, direction, node, etype):
-        return f"engram:adj:{graph}:{direction}:{node}:{etype}"
+        return f"percept:adj:{graph}:{direction}:{node}:{etype}"
 
     def _types(self, graph, direction, node):
-        return f"engram:adjtypes:{graph}:{direction}:{node}"
+        return f"percept:adjtypes:{graph}:{direction}:{node}"
 
     def _edge(self, graph, src, etype, dst):
-        return f"engram:edge:{graph}:{src}:{etype}:{dst}"
+        return f"percept:edge:{graph}:{src}:{etype}:{dst}"
 
     def _props(self, node_id):
-        return f"engram:nodeprops:{node_id}"
+        return f"percept:nodeprops:{node_id}"
 
     def _node_key(self, node_id):
         return f"{self.settings.node_prefix}:{node_id}"

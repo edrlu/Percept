@@ -1,7 +1,7 @@
 """Pluggable embedding backends (RedisVL vectorizers).
 
 Default is a local HuggingFace model (MiniLM, 384-dim) so the plugin works
-offline with no API key. Set ENGRAM_VECTORIZER=openai to use OpenAI instead.
+offline with no API key. Set PERCEPT_VECTORIZER=openai to use OpenAI instead.
 """
 
 from __future__ import annotations
@@ -39,4 +39,4 @@ def get_vectorizer(kind: str, model: str):
         # Fall back to a known embedding model if a HF id was left in env.
         oa_model = model if model.startswith("text-embedding") else "text-embedding-3-small"
         return _import_openai()(model=oa_model)
-    raise ValueError(f"Unknown ENGRAM_VECTORIZER={kind!r} (expected 'hf' or 'openai')")
+    raise ValueError(f"Unknown PERCEPT_VECTORIZER={kind!r} (expected 'hf' or 'openai')")

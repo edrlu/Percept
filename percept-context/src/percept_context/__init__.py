@@ -1,6 +1,6 @@
-"""Engram — a Redis-native context graph + GraphRAG engine, exposed over MCP.
+"""Percept Context — a Redis-native context graph + GraphRAG engine, exposed over MCP.
 
-Engram turns Redis into a property graph: nodes carry vector embeddings
+Percept Context turns Redis into a property graph: nodes carry vector embeddings
 (via RedisVL) and edges are reward-weighted relationships (Redis sorted sets).
 Retrieval fuses semantic vector search (find entry nodes) with weighted graph
 traversal (pull the connected, proven-to-perform subgraph) — i.e. GraphRAG.

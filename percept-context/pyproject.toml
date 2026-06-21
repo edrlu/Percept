@@ -1,12 +1,12 @@
 [project]
-name = "engram-mcp"
+name = "percept-context-plugin"
 version = "0.1.0"
-description = "Engram — a Redis-native context graph + GraphRAG engine, exposed over MCP."
+description = "Percept Context — a Redis-native context graph + GraphRAG engine for video-ad generation, exposed over MCP."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
-authors = [{ name = "Cerebra" }]
-keywords = ["redis", "redisvl", "mcp", "graphrag", "knowledge-graph", "vector-search", "rag"]
+authors = [{ name = "Percept" }]
+keywords = ["redis", "redisvl", "mcp", "graphrag", "knowledge-graph", "context-graph", "vector-search", "rag", "video"]
 dependencies = [
     "mcp>=1.2.0",
     "redis>=5.0.0",
@@ -19,15 +19,15 @@ dependencies = [
 [project.optional-dependencies]
 # Optional LLM composition (compose_brief tool). Core graph works without it.
 llm = ["anthropic>=0.40.0"]
-# Optional OpenAI embeddings instead of local HF.
+# Optional OpenAI embeddings instead of local HF (torch-free install).
 openai = ["openai>=1.0.0"]
 
 [project.scripts]
-engram-mcp = "engram.server:main"
+percept-context = "percept_context.server:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/engram"]
+packages = ["src/percept_context"]

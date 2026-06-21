@@ -1,4 +1,4 @@
-"""Environment-driven configuration for Engram."""
+"""Environment-driven configuration for Percept Context."""
 
 from __future__ import annotations
 
@@ -34,12 +34,12 @@ def load_settings() -> Settings:
     return Settings(
         redis_url=url,
         redis_protocol=int(os.environ.get("REDIS_PROTOCOL", "2")),
-        node_index=os.environ.get("ENGRAM_INDEX", "engram_nodes"),
-        node_prefix=os.environ.get("ENGRAM_PREFIX", "engram:node"),
-        default_graph=os.environ.get("ENGRAM_DEFAULT_GRAPH", "shared"),
-        vectorizer=os.environ.get("ENGRAM_VECTORIZER", "hf"),
+        node_index=os.environ.get("PERCEPT_INDEX", "percept_nodes"),
+        node_prefix=os.environ.get("PERCEPT_PREFIX", "percept:node"),
+        default_graph=os.environ.get("PERCEPT_DEFAULT_GRAPH", "shared"),
+        vectorizer=os.environ.get("PERCEPT_VECTORIZER", "hf"),
         embedding_model=os.environ.get(
-            "ENGRAM_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
+            "PERCEPT_EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2"
         ),
-        llm_model=os.environ.get("ENGRAM_LLM_MODEL", "claude-opus-4-8"),
+        llm_model=os.environ.get("PERCEPT_LLM_MODEL", "claude-opus-4-8"),
     )
