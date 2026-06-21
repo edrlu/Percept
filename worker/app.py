@@ -4,6 +4,8 @@ Returns compact ROI traces rather than streaming the entire ~20k-vertex
 surface tensor to a browser. The model still runs its full cortical prediction.
 """
 
+import hashlib
+import json
 import os
 import tempfile
 import threading
@@ -22,6 +24,9 @@ MODEL_ID = os.getenv("TRIBEV2_MODEL_ID", "facebook/tribev2")
 # features and weights beside the worker instead of assuming a writable /data.
 CACHE_DIR = os.getenv("TRIBEV2_CACHE_DIR", str(Path(__file__).resolve().parent / ".cache"))
 MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(1_000_000_000)))
+# Per-video prediction cache: each result is saved as <sha256-of-video>.json here,
+# so re-uploading the same clip returns instantly instead of re-running inference.
+PREDICTIONS_DIR = Path(os.getenv("TRIBEV2_PREDICTIONS_DIR", str(Path(__file__).resolve().parent.parent / "prediction_cache")))
 model: TribeModel | None = None
 
 
@@ -378,20 +383,43 @@ async def predict(video: UploadFile = File(...)):
     if model is None:
         raise HTTPException(status_code=503, detail="Model is still loading.")
 
+    PREDICTIONS_DIR.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="tribev2-") as tmp:
         destination = Path(tmp) / f"input{suffix}"
+        hasher = hashlib.sha256()
         written = 0
         with destination.open("wb") as output:
             while chunk := await video.read(1024 * 1024):
                 written += len(chunk)
                 if written > MAX_UPLOAD_BYTES:
                     raise HTTPException(status_code=413, detail="Video exceeds upload limit.")
+                hasher.update(chunk)
                 output.write(chunk)
+        await video.close()
+
+        # Content-addressed cache: identical video bytes -> identical key -> reuse.
+        digest = hasher.hexdigest()
+        cache_file = PREDICTIONS_DIR / f"{digest}.json"
+        if cache_file.exists():
+            try:
+                cached = json.loads(cache_file.read_text())
+                cached["cached"] = True
+                print(f"[cache] hit {digest[:12]} -> returning saved result")
+                return cached
+            except Exception as exc:  # corrupt entry: fall through and recompute
+                print(f"[cache] ignoring unreadable {cache_file.name}: {exc}")
+
         try:
             events = model.get_events_dataframe(video_path=str(destination))
             predictions, _ = model.predict(events, verbose=False)
-            return build_response(predictions)
+            result = build_response(predictions)
         except Exception as exc:
             raise HTTPException(status_code=500, detail=f"TRIBE v2 inference failed: {exc}") from exc
-        finally:
-            await video.close()
+
+        result["cached"] = False
+        try:
+            cache_file.write_text(json.dumps(result))
+            print(f"[cache] saved {digest[:12]} -> {cache_file}")
+        except Exception as exc:
+            print(f"[cache] failed to save {cache_file.name}: {exc}")
+        return result

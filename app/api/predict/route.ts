@@ -1,10 +1,18 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
-// CPU inference (WhisperX + V-JEPA2-giant + Llama) can take many minutes; allow
-// the UI to wait instead of timing out and falling back to demo data. On a fast
-// GPU worker this is comfortably under the old 300s.
-export const maxDuration = 7200;
+// A cold first inference (loading ~25GB of weights into the GPU) can take several
+// minutes; allow the UI to wait instead of timing out and falling back to demo
+// data. (A warm worker is seconds.)
+export const maxDuration = 14400;
+
+// Node's fetch (undici) has a ~300s headersTimeout that would still cut off a slow
+// cold inference even with maxDuration raised. Lift it globally — best-effort:
+// no-ops if the bundled undici isn't importable.
+import("next/dist/compiled/undici")
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  .then((u: any) => u.setGlobalDispatcher?.(new u.Agent({ headersTimeout: 0, bodyTimeout: 0 })))
+  .catch(() => {});
 
 /**
  * Thin gateway to the GPU inference worker. Keeping Python and its sizeable
@@ -25,7 +33,7 @@ export async function POST(request: Request) {
     const upstream = await fetch(`${workerUrl.replace(/\/$/, "")}/predict`, {
       method: "POST",
       body: payload,
-      signal: AbortSignal.timeout(7_200_000),
+      signal: AbortSignal.timeout(14_400_000),
     });
     const contentType = upstream.headers.get("content-type") ?? "application/json";
     return new NextResponse(await upstream.arrayBuffer(), {

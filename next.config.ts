@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
   // CPU inference (WhisperX + V-JEPA2-giant + Llama) can take many minutes. The
   // dev server otherwise cuts the request off (~5 min Node default) and the UI
   // falls back to demo data. Extend it so /api/predict can wait for real output.
-  experimental: { proxyTimeout: 7_200_000 },
+  experimental: { proxyTimeout: 14_400_000 },
 };
 
 export default nextConfig;

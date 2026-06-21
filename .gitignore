@@ -45,6 +45,7 @@ yarn-error.log*
 /.venv/
 /.tribev2-worker*.log
 /worker/.cache/
+/prediction_cache/
 
 # Local AI-assistant tooling and Python bytecode
 /.agents/
