@@ -557,6 +557,15 @@ export default function Home() {
     if (!active.length) return;
     const id = setInterval(async () => {
       for (const [key, v] of active) {
+        // No silent waiting: if a queued job is never claimed by the worker,
+        // error out instead of spinning forever (covers a dead/missing regen
+        // worker even when the agent CLI is installed).
+        if (v.status === "awaiting_generation" && v.startedAt && Date.now() - v.startedAt > 45000) {
+          const slot = key.split("-").map((s) => formatTime(Number(s))).join("–");
+          setRegenJobs((prev) => ({ ...prev, [key]: { ...prev[key], status: "error", error: "The regen worker didn't pick this up within 45s. Is it running? (needs a claude/codex CLI on the server, then restart run.sh)" } }));
+          logUpsert(`regen_${key}`, { title: `Regenerate ${slot}`, detail: "Worker never claimed the job — is the regen worker running?", status: "error" });
+          continue;
+        }
         try {
           const response = await fetch(`/api/regenerate?job=${v.jobId}`, { cache: "no-store" });
           if (!response.ok) continue;

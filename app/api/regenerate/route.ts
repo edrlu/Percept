@@ -79,6 +79,23 @@ export async function POST(request: Request) {
   const provider: RegenJob["provider"] = form.get("provider") === "kling" ? "kling" : "seedance";
   const agent: RegenJob["agent"] = form.get("agent") === "claude" ? "claude" : "codex";
 
+  // Fail fast: if the chosen agent's CLI isn't installed on the server, reject now
+  // with a clear error instead of queuing a job the worker can never pick up (which
+  // used to sit "awaiting_generation" forever). run.sh sets REGEN_AGENTS to the
+  // installed CLIs (possibly ""); when it's unset (app started another way) we skip
+  // the check rather than block.
+  const declaredAgents = process.env.REGEN_AGENTS;
+  if (declaredAgents !== undefined) {
+    const available = declaredAgents.split(",").map((s) => s.trim()).filter(Boolean);
+    if (!available.includes(agent)) {
+      const detail = available.length
+        ? `The '${agent}' agent CLI isn't installed on the server (available: ${available.join(", ")}). Pick an available agent in settings, or install '${agent}'.`
+        : `No generation-agent CLI ('claude' or 'codex') is installed on the server, so clip regeneration can't run. Install one and restart.`;
+      rlog(`job REJECTED · agent=${agent} unavailable (REGEN_AGENTS=${JSON.stringify(declaredAgents)})`);
+      return NextResponse.json({ error: detail }, { status: 503 });
+    }
+  }
+
   const id = `job_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
   const dir = jobDir(id);
   await mkdir(dir, { recursive: true });
@@ -105,7 +122,7 @@ export async function POST(request: Request) {
     };
     await writeJob(job);
     await appendJobLog(id, `queued provider=${provider} agent=${agent} duration=${job.durationSec}s source=${sourceId} frame=${frameId} slot=${label ?? "?"}`);
-    rlog(`job QUEUED ${id} · provider=${provider} agent=${agent} dur=${job.durationSec}s slot=${label ?? "?"} (worker will pick up within poll interval)`);
+    rlog(`job QUEUED ${id} · provider=${provider} agent=${agent} dur=${job.durationSec}s slot=${label ?? "?"} (agent '${agent}' available; worker should claim it shortly)`);
 
     return NextResponse.json({
       jobId: id,
