@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, appendFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -11,6 +11,10 @@ import path from "node:path";
 
 export const REGEN_ROOT = path.join(process.cwd(), "regen");
 export const SOURCE_ROOT = path.join(REGEN_ROOT, "sources");
+// Per-run archive of the raw segments: one folder per regeneration run holds the
+// floor clip (the original segment being spliced out) plus each generated take.
+// The merged final.mp4 deliberately never lands here — only the 4 source clips.
+export const DATA_ROOT = path.join(process.cwd(), "data");
 
 export type RegenStatus = "awaiting_generation" | "generating" | "merging" | "done" | "error";
 
@@ -25,7 +29,12 @@ export type RegenJob = {
   frameId: string;
   provider?: "seedance" | "kling"; // generation model chosen in the UI
   agent?: "claude" | "codex"; // which MCP agent the worker spawns to drive Pika
+  runId?: string; // batch id shared by every take of one regeneration run → data/<runId>/
+  takeIndex?: number; // 0-based position of this take within the run → take_<i+1>.mp4
   label?: string;
+  // Temporary clip-quality label from the local filler scorer. This is kept on
+  // the job so polling clients can display the result as soon as it is ready.
+  score?: number;
   stage?: string;
   error?: string;
   createdAt: string;
@@ -71,6 +80,17 @@ export function sourceDir(id: string) {
   return path.join(SOURCE_ROOT, safe);
 }
 
+export function dataDir(runId: string) {
+  // Same path-traversal guard as job/source ids: the runId is a client-supplied
+  // timestamp, so strip anything that isn't filename-safe before joining.
+  const safe = runId.replace(/[^a-zA-Z0-9_-]/g, "");
+  return path.join(DATA_ROOT, safe);
+}
+
+export async function fileExists(p: string): Promise<boolean> {
+  try { await access(p); return true; } catch { return false; }
+}
+
 export async function readJob(id: string): Promise<RegenJob | null> {
   try {
     return JSON.parse(await readFile(path.join(jobDir(id), "job.json"), "utf8"));
@@ -80,8 +100,14 @@ export async function readJob(id: string): Promise<RegenJob | null> {
 }
 
 export async function writeJob(job: RegenJob): Promise<void> {
-  await mkdir(jobDir(job.id), { recursive: true });
-  await writeFile(path.join(jobDir(job.id), "job.json"), JSON.stringify({ ...job, updatedAt: new Date().toISOString() }, null, 2));
+  const dir = jobDir(job.id);
+  await mkdir(dir, { recursive: true });
+  // Atomic write (temp + rename): the worker polls job.json concurrently, so a
+  // reader must never catch a half-written file and a write must not be torn.
+  const target = path.join(dir, "job.json");
+  const tmp = path.join(dir, `.job.json.${process.pid}.tmp`);
+  await writeFile(tmp, JSON.stringify({ ...job, updatedAt: new Date().toISOString() }, null, 2));
+  await rename(tmp, target);
 }
 
 function shortCmd(cmd: string, args: string[]) {
@@ -153,6 +179,46 @@ export async function probe(file: string, opts: { jobId?: string; label?: string
 /** Extract a single frame at `sec` to a PNG (fast input-side seek). */
 export async function extractFrame(src: string, sec: number, out: string, opts: { jobId?: string; label?: string } = {}): Promise<void> {
   await run("ffmpeg", ["-y", "-ss", `${sec}`, "-i", src, "-frames:v", "1", "-q:v", "2", out], { ...opts, label: opts.label ?? `extract-frame@${sec.toFixed(3)}s` });
+}
+
+/**
+ * Cut [startSec, endSec] of `src` into a standalone mp4 — this is the "floor"
+ * clip, the exact stretch of source that the generated take replaces. Re-encoded
+ * (not stream-copied) so the cut is frame-accurate at non-keyframe boundaries.
+ */
+export async function extractSegment(src: string, startSec: number, endSec: number, out: string, opts: { jobId?: string; label?: string } = {}): Promise<void> {
+  const start = Math.max(0, startSec);
+  const dur = Math.max(0.04, endSec - start);
+  await run("ffmpeg", ["-y", "-ss", `${start}`, "-i", src, "-t", `${dur}`,
+    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast", "-crf", "20",
+    "-c:a", "aac", "-movflags", "+faststart", out],
+    { ...opts, label: opts.label ?? `extract-segment[${start.toFixed(2)},${endSec.toFixed(2)}]` });
+}
+
+/**
+ * Save a generated take's audio as an MP3 for downstream scoring. Generated
+ * clips are not guaranteed to contain audio, so synthesize a silent track when
+ * necessary; every archived take therefore has a stable MP3 model input.
+ */
+export async function extractAudioMp3(src: string, out: string, opts: { jobId?: string; label?: string } = {}): Promise<void> {
+  const meta = await probe(src, { ...opts, label: "probe-take-audio" });
+  const duration = Math.max(0.04, meta.duration || 5);
+  const input = meta.hasAudio
+    ? ["-i", src, "-map", "0:a:0"]
+    : ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100", "-t", duration.toFixed(3)];
+  await run("ffmpeg", ["-y", ...input, "-vn", "-c:a", "libmp3lame", "-q:a", "4", out], {
+    ...opts,
+    label: opts.label ?? "archive-take-mp3",
+  });
+}
+
+/**
+ * Filler quality model contract. It deliberately returns a random whole-number
+ * grade until the real video/audio evaluator replaces it.
+ */
+export async function scoreArchivedTakeMp3(mp3: string): Promise<number> {
+  await access(mp3); // The scorer always consumes the archived model input.
+  return 50 + Math.floor(Math.random() * 51);
 }
 
 /**

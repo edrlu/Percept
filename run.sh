@@ -175,6 +175,29 @@ resolve_agent claude CLAUDE
 resolve_agent codex CODEX
 export REGEN_AGENTS
 if [[ -n "$REGEN_AGENTS" ]]; then
+  # Singleton: kill any regen worker left over from a previous run of THIS
+  # checkout before starting a fresh one. The cleanup trap only fires on a clean
+  # exit, so a Ctrl-C'd terminal, a crash, or a port-bumped second launch can
+  # leave orphaned workers polling the same regen/ dir — they race on job.json /
+  # .claimed and, if they were started on a now-stale port, hand finished clips
+  # back to the wrong URL so jobs look stuck forever. Match on the absolute
+  # worker path so we never touch a worker from a different checkout.
+  WORKER_SCRIPT="$ROOT_DIR/worker/regen-worker.mjs"
+  STALE_WORKERS="$(pgrep -f "$WORKER_SCRIPT" 2>/dev/null || true)"
+  if [[ -n "$STALE_WORKERS" ]]; then
+    info "Stopping $(echo "$STALE_WORKERS" | wc -l | tr -d ' ') orphaned regen worker(s) from a previous run…"
+    # Iterate explicitly so this does not rely on shell word-splitting of the
+    # newline-separated pid list (correct under bash, sh, or zsh alike).
+    while IFS= read -r stale_pid; do
+      [[ -n "$stale_pid" ]] || continue
+      kill "$stale_pid" 2>/dev/null || true
+    done <<< "$STALE_WORKERS"
+    sleep 1
+    while IFS= read -r stale_pid; do
+      [[ -n "$stale_pid" ]] || continue
+      kill -9 "$stale_pid" 2>/dev/null || true
+    done <<< "$STALE_WORKERS"
+  fi
   REGEN_WORKER_LOG="$ROOT_DIR/.regen-worker-${NEXT_PORT}.log"
   info "Starting clip-regeneration worker (agents: ${REGEN_AGENTS} · logs: ${REGEN_WORKER_LOG#$ROOT_DIR/})"
   CEREBRA_URL="http://localhost:${NEXT_PORT}" \

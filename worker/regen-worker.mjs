@@ -18,7 +18,8 @@
  * agent process crashes.
  */
 import { spawn } from "node:child_process";
-import { readdir, readFile, writeFile, appendFile, stat, access } from "node:fs/promises";
+import { readdir, readFile, writeFile, appendFile, stat, access, rename } from "node:fs/promises";
+import { unlinkSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,7 +67,14 @@ async function readJob(dir) {
 }
 
 async function writeJobStatus(dir, job, patch) {
-  await writeFile(path.join(dir, "job.json"), JSON.stringify({ ...job, ...patch, updatedAt: new Date().toISOString() }, null, 2));
+  // Atomic write: a reader (the app's GET poll) or another writer must never see
+  // a half-written file, and rename is the last-writer-wins primitive that keeps
+  // a status transition from being torn. Temp lives in the same dir so rename
+  // stays on one filesystem.
+  const target = path.join(dir, "job.json");
+  const tmp = path.join(dir, `.job.json.${process.pid}.tmp`);
+  await writeFile(tmp, JSON.stringify({ ...job, ...patch, updatedAt: new Date().toISOString() }, null, 2));
+  await rename(tmp, target);
 }
 
 async function claimStale(dir) {
@@ -84,13 +92,17 @@ function buildPrompt(job, dir) {
   const provider = job.provider === "kling" ? "kling" : "seedance";
   const start = path.join(dir, "frame_start.png");
   const end = path.join(dir, "frame_end.png");
+  // Each take in a run reads its own meta-prompt from vidgenmd/take_<N>.md so the
+  // three clips get slightly different creative leans (frame-match/realism still win).
+  const takeNum = Number.isInteger(job.takeIndex) && job.takeIndex >= 0 && job.takeIndex <= 2 ? job.takeIndex + 1 : 1;
+  const metaFile = path.join(ROOT, "vidgenmd", `take_${takeNum}.md`);
   // Each provider takes a different param set for the start->end transition.
   const step3 = provider === "kling"
     ? `3. Call mcp__pika__generate_video with: provider="kling", mode="image_to_video", image = the START frame (${start}), ` +
       `image_tail = the END frame (${end}), your prompt, your negative_prompt, duration=${job.durationSec}, ` +
-      "quality_mode=\"pro\", prompt_adherence=\"strict\", sound=false. (Kling uses image_tail for the end frame and accepts negative_prompt / quality_mode / prompt_adherence.)"
+      "quality_mode=\"pro\", prompt_adherence=\"strict\", sound=true. (Kling uses image_tail for the end frame and accepts negative_prompt / quality_mode / prompt_adherence.)"
     : `3. Call mcp__pika__generate_video with: provider="seedance", mode="image_to_video", image = the START frame (${start}), ` +
-      `end_image = the END frame (${end}), your prompt, duration=${job.durationSec}, fast=true, resolution="720p", sound=false, ` +
+      `end_image = the END frame (${end}), your prompt, duration=${job.durationSec}, fast=true, resolution="720p", sound=true, ` +
       "and aspect_ratio matching the frames' orientation (\"16:9\" for landscape, \"9:16\" for portrait). " +
       "Do NOT pass negative_prompt, quality_mode, prompt_adherence, or image_tail — Seedance rejects those (image_tail is Kling-only; use end_image). " +
       "Note: fast tier requires 720p (1080p is rejected with fast).";
@@ -109,7 +121,7 @@ function buildPrompt(job, dir) {
     "",
     "Follow these steps exactly:",
     "1. Read both frame PNGs so you understand the shot (subjects, text/logos, lighting, what changes start->end).",
-    "2. Read app/lib/regenPrompt.ts and apply its REGEN_META_PROMPT to those two frames to craft a `prompt` (and a `negative_prompt`) for an image_to_video shot from the START frame into the END frame. Favor one continuous, physically plausible action and a smooth eased camera/object trajectory; do not describe a morph unless the endpoints make that mechanism unavoidable.",
+    `2. Read ${metaFile} and apply it to those two frames to craft a \`prompt\` (and a \`negative_prompt\`) for an image_to_video shot from the START frame into the END frame. That file is this take's meta-prompt: realism, consistency, and matching the start/end frames are top priority; its low-priority "take direction" only nudges the creative lean and must be dropped if it conflicts. Favor one continuous, physically plausible action and a smooth eased camera/object trajectory; do not describe a morph unless the endpoints make that mechanism unavoidable.`,
     step3,
     "Do NOT pass background=true — let the call block and return the video inline (fast/720p renders finish within the server budget). Inspect the tool schema to pass the frames in the form it expects (e.g. a media reference with base64 bytes, or upload_asset first). Only if it falls back to {task_id,status}: poll mcp__pika__task_status in a tight loop until completed/failed/cancelled, passing the task_id EXACTLY as returned — it is a long JWT; copy it verbatim, never truncate or edit it.",
     `4. Download the finished video to ${path.join(dir, "clip.mp4")} (use the tool's download or curl the returned URL via Bash).`,
@@ -285,7 +297,42 @@ async function tick() {
   }
 }
 
+// Singleton guard: only one worker may own a given regen/ dir. Two workers
+// polling the same dir race on job.json / .claimed and can each spawn an agent
+// for the same job (double Pika calls), and a worker started on a now-stale port
+// hands finished clips back to the wrong URL. The lock records our pid + app
+// URL; a second worker that finds a LIVE owner exits, while a stale lock from a
+// dead worker is taken over. CEREBRA_REGEN_ALLOW_MULTI=1 bypasses this for the
+// rare intentional multi-instance case.
+const LOCK_FILE = path.join(REGEN_DIR, ".worker.lock");
+
+function pidAlive(pid) {
+  try { process.kill(pid, 0); return true; } catch (err) { return err.code === "EPERM"; }
+}
+
+async function acquireLock() {
+  if (process.env.CEREBRA_REGEN_ALLOW_MULTI === "1") return true;
+  try {
+    const existing = JSON.parse(await readFile(LOCK_FILE, "utf8"));
+    if (existing.pid && existing.pid !== process.pid && pidAlive(existing.pid)) {
+      log(`ABORT · another regen worker (pid=${existing.pid}, url=${existing.appUrl || "?"}) already owns ${REGEN_DIR}.`);
+      log(`        Set CEREBRA_REGEN_ALLOW_MULTI=1 to override, or stop the other worker.`);
+      return false;
+    }
+    if (existing.pid) log(`taking over stale lock from dead pid=${existing.pid}`);
+  } catch { /* no/invalid lock — we take it */ }
+  await writeFile(LOCK_FILE, JSON.stringify({ pid: process.pid, appUrl: APP_URL, startedAt: new Date().toISOString() }));
+  for (const sig of ["SIGINT", "SIGTERM", "exit"]) {
+    process.on(sig, () => {
+      try { unlinkSync(LOCK_FILE); } catch { /* best effort */ }
+      if (sig !== "exit") process.exit(0);
+    });
+  }
+  return true;
+}
+
 async function main() {
+  if (!(await acquireLock())) process.exit(0);
   log(`START · watching ${REGEN_DIR} → ${APP_URL}`);
   log(`config · concurrency=${MAX_CONCURRENT} poll=${POLL_MS}ms staleClaim=${Math.round(STALE_CLAIM_MS / 60000)}m model=${MODEL || "(default)"} debug=${DEBUG}`);
   log(`per-job traces are written to regen/<id>/agent.log`);

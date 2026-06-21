@@ -46,6 +46,9 @@ yarn-error.log*
 # Clip-regeneration job scratch (source video, extracted frames, generated + merged clips)
 /regen/
 
+# Per-run segment archive: floor clip + generated takes saved per regeneration run
+/data/
+
 # Local TRIBE v2 runtime
 /.venv/
 /.tribev2-worker*.log
