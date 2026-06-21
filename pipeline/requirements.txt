@@ -1,0 +1,25 @@
+# Cerebra Stage 1 — research-backed RAG prompt optimizer.
+# Python 3.11/3.12/3.13. Kept separate from worker/ so the neuroscience stack
+# and the retrieval stack install independently.
+
+fastapi>=0.115,<1.0
+uvicorn[standard]>=0.32,<1.0
+python-multipart>=0.0.20
+pydantic>=2.7,<3.0
+
+# Redis "beyond caching": RedisVL drives vector search, the semantic prompt
+# cache, and the agent-memory log. redisvl pulls in redis-py.
+redisvl>=0.3,<1.0
+hiredis>=3,<4
+
+# Local, free embeddings via RedisVL's HuggingFace vectorizer (no API key).
+sentence-transformers>=3.0,<6.0
+
+# Research synthesis + prompt optimization. Optional at runtime: without an
+# ANTHROPIC_API_KEY the optimizer falls back to a deterministic template path.
+anthropic>=0.49
+
+# Voice intake. Primary: OpenAI Whisper API (needs OPENAI_API_KEY). The browser
+# Web Speech mic in the Studio needs neither. faster-whisper is an offline fallback.
+openai>=1.30
+# faster-whisper>=1.0

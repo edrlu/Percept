@@ -1,0 +1,42 @@
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { jobDir, sourceDir } from "@/app/lib/regen";
+
+export const runtime = "nodejs";
+
+const ALLOWED: Record<string, string> = {
+  "frame_start.png": "image/png",
+  "frame_end.png": "image/png",
+  "clip.mp4": "video/mp4",
+  "final.mp4": "video/mp4",
+  "job.log": "text/plain; charset=utf-8",
+  "agent.log": "text/plain; charset=utf-8",
+};
+
+/** GET /api/regenerate/file?job=<id>&name=<frame_start.png|final.mp4|...> */
+export async function GET(request: Request) {
+  const params = new URL(request.url).searchParams;
+  const id = params.get("job");
+  const source = params.get("source");
+  const frame = params.get("frame");
+  const edge = params.get("edge");
+  const name = params.get("name") ?? "";
+  if (source && frame && (edge === "start" || edge === "end")) {
+    try {
+      const data = await readFile(path.join(sourceDir(source), "frames", `${frame}_${edge}.png`));
+      return new Response(new Uint8Array(data), { headers: { "content-type": "image/png", "cache-control": "no-store" } });
+    } catch { return new Response("Not found", { status: 404 }); }
+  }
+  const type = ALLOWED[name];
+  if (!id || !type) return new Response("Not found", { status: 404 });
+
+  try {
+    const data = await readFile(path.join(jobDir(id), name));
+    const headers: Record<string, string> = { "content-type": type, "cache-control": "no-store" };
+    if (name === "final.mp4") headers["content-disposition"] = `attachment; filename="cerebra_regenerated.mp4"`;
+    if (name.endsWith(".log")) headers["content-disposition"] = `inline; filename="${name}"`;
+    return new Response(new Uint8Array(data), { headers });
+  } catch {
+    return new Response("Not found", { status: 404 });
+  }
+}

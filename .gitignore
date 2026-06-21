@@ -22,9 +22,11 @@
 # production
 /build
 
+test/.venv/
 # misc
 .DS_Store
 *.pem
+test/cache/
 
 # debug
 npm-debug.log*
@@ -41,9 +43,14 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 
+# Clip-regeneration job scratch (source video, extracted frames, generated + merged clips)
+/regen/
+
 # Local TRIBE v2 runtime
 /.venv/
 /.tribev2-worker*.log
+/.regen-worker*.log
+/.cerebra-settings.json
 /worker/.cache/
 /prediction_cache/
 
