@@ -1,0 +1,11 @@
+Cerebra Pika Plugin
+
+The plugin code is licensed under MIT. It downloads and uses third-party
+models under their own licenses:
+
+- TRIBE v2 (`facebook/tribev2`) is published under CC-BY-NC-4.0. Commercial
+  use requires permission compatible with that license.
+- YOLO model weights are distributed by Ultralytics and remain subject to
+  Ultralytics' applicable model/software license terms.
+
+No TRIBE v2 model weights are redistributed in this plugin.

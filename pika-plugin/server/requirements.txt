@@ -1,0 +1,15 @@
+# Reproducible upstream revision tested by the Colab notebook.
+numpy==2.2.6
+git+https://github.com/facebookresearch/tribev2.git@38b3db073a7fa5bfbfc7fdd894b1a3536e4553e3
+# Verified with TRIBE v2's Wav2Vec2-BERT import path.
+transformers==5.12.1
+# TRIBE invokes WhisperX through `uvx` when text transcription is enabled.
+uv>=0.8
+opencv-python-headless>=4.10
+ultralytics>=8.3
+# Atlas (Glasser/HCP-MMP -> fsaverage5) built once at startup:
+mne>=1.6
+# Serving:
+fastapi>=0.110
+uvicorn[standard]>=0.29
+python-multipart>=0.0.9

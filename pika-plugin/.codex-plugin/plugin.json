@@ -1,0 +1,39 @@
+{
+  "name": "pika-plugin",
+  "version": "0.3.0",
+  "description": "Evaluate Pika videos with an auditable TRIBE v2, OpenCV, and YOLO ad score, then recursively improve them with reward feedback.",
+  "author": {
+    "name": "Cerebra"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pika",
+    "percept",
+    "video-evaluation",
+    "tribev2",
+    "opencv",
+    "yolo",
+    "ad-score",
+    "reward-loop"
+  ],
+  "skills": "./skills",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Percept Video Eval",
+    "shortDescription": "Score and recursively improve Pika videos",
+    "longDescription": "Percept Video Eval gives Pika an auditable reward layer. It scores clips of at most three seconds with a weighted combination of TRIBE v2 cortical activation, OpenCV production features, and YOLO semantic/composition features, then feeds the weakest weighted features back into a maximum-five-iteration Pika improvement loop.",
+    "developerName": "Cerebra",
+    "category": "Creative",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/Pika-Labs/Pika-Plugins",
+    "defaultPrompt": [
+      "Evaluate this Pika video and show its weighted ad score.",
+      "Recursively improve this three-second Pika ad.",
+      "Compare these Pika video candidates and keep the winner."
+    ],
+    "brandColor": "#7C3AED"
+  }
+}

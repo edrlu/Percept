@@ -1,0 +1,16 @@
+{
+  "name": "pika-plugin",
+  "description": "Evaluate Pika videos with TRIBE v2, OpenCV, and YOLO, then recursively improve them with reward feedback.",
+  "version": "0.3.0",
+  "author": {
+    "name": "Cerebra"
+  },
+  "license": "MIT",
+  "keywords": [
+    "pika",
+    "percept",
+    "video-evaluation",
+    "ad-score",
+    "reward-loop"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "name": "pika-plugin",
+  "description": "Evaluate and recursively improve Pika videos using an auditable multimodal ad score.",
+  "version": "0.3.0",
+  "author": {
+    "name": "Cerebra"
+  },
+  "license": "MIT"
+}
