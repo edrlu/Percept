@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Paper edit",
+  "description": "The complete plan for the cut, written before any clip is placed. Once this exists, assembly is mechanical: every entry maps to one add_clips entry. Produced by the orchestrator from the merged shot log plus the beat map.",
+  "type": "object",
+  "required": ["fps", "music", "sections", "slots"],
+  "properties": {
+    "fps": { "type": "number", "description": "Project fps, from get_timeline. Every frame number below assumes it." },
+    "targetDurationSeconds": { "type": "number" },
+    "music": {
+      "type": "object",
+      "required": ["mediaRef", "bpm", "startFrame"],
+      "properties": {
+        "mediaRef": { "type": "string" },
+        "title": { "type": "string" },
+        "bpm": { "type": "number", "description": "From detect_beats. Verify against observed downbeat spacing before trusting it." },
+        "startFrame": { "type": "integer", "description": "Lay the music at 0 so every beat frame is round(beatSeconds * fps)." },
+        "downbeatFrames": { "type": "array", "items": { "type": "integer" }, "description": "round(downbeatSeconds * fps) for each downbeat. Derived from absolute beat times, never accumulated." }
+      }
+    },
+    "sections": {
+      "type": "array",
+      "description": "The energy curve, in musical sections rather than seconds.",
+      "items": {
+        "type": "object",
+        "required": ["name", "startDownbeatIndex", "bars", "energy", "cutLengthBars"],
+        "properties": {
+          "name": { "type": "string", "description": "hook, build, drop, sustain, breakdown, peak, resolve" },
+          "startDownbeatIndex": { "type": "integer" },
+          "bars": { "type": "integer" },
+          "energy": { "type": "integer", "minimum": 1, "maximum": 10 },
+          "cutLengthBars": { "type": "number", "description": "Nominal hold for this section: 0.5, 1, 2 or 4 bars. Vary around it — do not make every cut identical." },
+          "treatment": { "type": "string", "description": "Section-wide look or motion note, e.g. 'punch-in on every downbeat', 'slow-mo, no effects'." }
+        }
+      }
+    },
+    "slots": {
+      "type": "array",
+      "description": "The shot list, in timeline order. One entry per cut.",
+      "items": {
+        "type": "object",
+        "required": ["index", "startFrame", "endFrame", "mediaRef", "sourceIn", "sourceOut"],
+        "properties": {
+          "index": { "type": "integer" },
+          "startFrame": { "type": "integer", "description": "Timeline frame. Must equal a downbeat frame unless the entry is a deliberate off-beat cut." },
+          "endFrame": { "type": "integer", "description": "Exclusive. Must equal the next slot's startFrame — no gaps, no overlaps on the same track." },
+          "mediaRef": { "type": "string" },
+          "sourceIn": { "type": "number", "description": "Source seconds, from the shot log select." },
+          "sourceOut": { "type": "number" },
+          "section": { "type": "string" },
+          "why": { "type": "string", "description": "One line: why this shot, here. If it cannot be justified, the slot is filler — find a better shot." },
+          "treatment": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Planned polish, applied only after the cut is locked: punch-in, speed-ramp, whip-in, flash-out, slow-mo, grid, freeze."
+          },
+          "audioPunch": {
+            "type": "object",
+            "description": "Present when this shot's diegetic audio should come up under the music.",
+            "properties": {
+              "volumeDb": { "type": "number", "minimum": -60, "maximum": 15 },
+              "duckMusicToDb": { "type": "number", "minimum": -60, "maximum": 15 }
+            }
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "description": "Filled after the slots are chosen, to prove nothing is missing.",
+      "properties": {
+        "people": { "type": "object", "additionalProperties": { "type": "integer" }, "description": "Appearances per person. A zero is a bug in the edit, not in the footage." },
+        "locations": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "unusedHeroes": { "type": "array", "items": { "type": "string" }, "description": "hero-verdict selects that did not make the cut. Justify each or place it." }
+      }
+    }
+  }
+}

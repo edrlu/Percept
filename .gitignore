@@ -58,7 +58,8 @@ yarn-error.log*
 
 # Local AI-assistant tooling and Python bytecode
 /.agents/
-/.claude/
+/.claude/*
+!/.claude/skills/
 /skills-lock.json
 __pycache__/
 next-env.d.ts

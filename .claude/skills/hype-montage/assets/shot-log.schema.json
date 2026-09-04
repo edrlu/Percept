@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shot log",
+  "description": "One record per source asset, produced by a footage-review subagent. The orchestrator merges these into the selects list. Everything needed to build the cut must be here, so nobody has to rewatch the footage.",
+  "type": "object",
+  "required": ["mediaRef", "reviewed", "selects"],
+  "properties": {
+    "mediaRef": {
+      "type": "string",
+      "description": "The asset id exactly as get_media returned it. Short-prefix ids must be passed back verbatim, never padded or completed."
+    },
+    "filename": {
+      "type": "string",
+      "description": "Human reference only. Never judge content from it."
+    },
+    "durationSeconds": { "type": "number" },
+    "fps": { "type": "number", "description": "Source fps. Flag when it differs from the project fps." },
+    "orientation": { "type": "string", "enum": ["landscape", "portrait", "square"] },
+    "reviewed": {
+      "type": "boolean",
+      "description": "True only if the agent actually called inspect_media on this asset. Never true by assumption."
+    },
+    "unusable": {
+      "type": "string",
+      "description": "Present only if the whole asset is unusable. States why (corrupt, black, <0.5s, hopelessly out of focus)."
+    },
+    "selects": {
+      "type": "array",
+      "description": "Usable moments inside this asset. One long clip can yield several. Empty means nothing in it is worth cutting.",
+      "items": {
+        "type": "object",
+        "required": ["inSeconds", "outSeconds", "verdict", "energy", "shot", "motion", "action"],
+        "properties": {
+          "inSeconds": { "type": "number", "description": "Source seconds. Pass straight to add_clips as source[0]." },
+          "outSeconds": { "type": "number", "description": "Source seconds. Pass straight to add_clips as source[1]." },
+          "verdict": {
+            "type": "string",
+            "enum": ["hero", "keep", "maybe", "cut"],
+            "description": "hero = earns a musical peak. keep = solid montage material. maybe = only if coverage demands it. cut = do not use."
+          },
+          "energy": { "type": "integer", "minimum": 1, "maximum": 10, "description": "How kinetic the moment is. Drives which part of the energy curve it belongs to." },
+          "shot": { "type": "string", "enum": ["wide", "medium", "close", "detail", "pov", "aerial"] },
+          "motion": { "type": "string", "enum": ["static", "handheld", "pan", "tilt", "whip", "tracking", "orbit", "zoom"] },
+          "motionDirection": { "type": "string", "enum": ["none", "left", "right", "up", "down", "in", "out"], "description": "Used to find match cuts: a shot moving left cuts cleanly into another moving left." },
+          "action": { "type": "string", "description": "What actually happens, in one concrete sentence. Written from the frames, not the filename." },
+          "subjects": { "type": "array", "items": { "type": "string" }, "description": "Who is on screen. Drives the coverage map so no friend is missing." },
+          "location": { "type": "string" },
+          "timeOfDay": { "type": "string", "enum": ["dawn", "morning", "midday", "afternoon", "golden", "dusk", "night"] },
+          "audioNote": { "type": "string", "description": "Any diegetic audio worth punching through the music: a scream, a laugh, a line of dialogue, a splash." },
+          "issues": {
+            "type": "array",
+            "items": { "type": "string", "enum": ["shaky", "backlit", "underexposed", "blownout", "softfocus", "wind", "rollingshutter", "vertical", "framerate", "obstructed"] }
+          },
+          "peakSeconds": { "type": "number", "description": "Source second of the single best frame — the impact, the reaction, the reveal. Align this to a downbeat when the moment carries a musical hit." }
+        }
+      }
+    }
+  }
+}
